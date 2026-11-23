@@ -108,9 +108,56 @@ public class KeyboardPrefs {
     public int getBottomMarginDp() { return prefs.getInt("bottom_margin_dp", 0); }
     public void setBottomMarginDp(int dp) { prefs.edit().putInt("bottom_margin_dp", Math.max(0, Math.min(48, dp))).apply(); }
 
-    // ---- Layouts & Tablet Modes (Strictly Unified Non-Split by Default!) ----
+    // ---- Layouts, Multi-Language & Tablet Modes (Strictly Unified Non-Split by Default!) ----
+    public static final String[] ALL_LANGUAGES = {"ar", "en", "fr", "es", "de", "ru"};
+
     public String getKeyboardLanguage() { return prefs.getString("keyboard_language", "ar"); }
     public void setKeyboardLanguage(String lang) { prefs.edit().putString("keyboard_language", lang).apply(); }
+
+    public List<String> getEnabledLanguages() {
+        String raw = prefs.getString("enabled_keyboard_languages", "ar,en");
+        List<String> list = new ArrayList<>();
+        for (String code : raw.split(",")) {
+            String clean = code.trim();
+            if (!clean.isEmpty() && !list.contains(clean)) {
+                list.add(clean);
+            }
+        }
+        if (list.isEmpty()) {
+            list.add("ar");
+            list.add("en");
+        }
+        return list;
+    }
+
+    public void setEnabledLanguages(List<String> languages) {
+        if (languages == null || languages.isEmpty()) return;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < languages.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(languages.get(i));
+        }
+        prefs.edit().putString("enabled_keyboard_languages", sb.toString()).apply();
+        if (!languages.contains(getKeyboardLanguage())) {
+            setKeyboardLanguage(languages.get(0));
+        }
+    }
+
+    public boolean isLanguageEnabled(String langCode) {
+        return getEnabledLanguages().contains(langCode);
+    }
+
+    public boolean setLanguageEnabled(String langCode, boolean enabled) {
+        List<String> current = new ArrayList<>(getEnabledLanguages());
+        if (enabled) {
+            if (!current.contains(langCode)) current.add(langCode);
+        } else {
+            if (current.size() <= 1) return false; // Always keep at least 1 active language
+            current.remove(langCode);
+        }
+        setEnabledLanguages(current);
+        return true;
+    }
 
     public String getArabicLayoutType() { return prefs.getString("arabic_layout_type", "default"); }
     public void setArabicLayoutType(String type) { prefs.edit().putString("arabic_layout_type", type).apply(); }
@@ -225,7 +272,7 @@ public class KeyboardPrefs {
     public boolean isSwipeTypingEnabled() { return prefs.getBoolean("swipe_typing_enabled", true); }
     public void setSwipeTypingEnabled(boolean v) { prefs.edit().putBoolean("swipe_typing_enabled", v).apply(); }
 
-    public String getSpacebarSwipeMode() { return prefs.getString("spacebar_swipe_mode", "cursor"); }
+    public String getSpacebarSwipeMode() { return prefs.getString("spacebar_swipe_mode", "lang"); }
     public void setSpacebarSwipeMode(String m) { prefs.edit().putString("spacebar_swipe_mode", m).apply(); }
 
     public boolean isCursorControlEnabled() { return "cursor".equals(getSpacebarSwipeMode()); }
@@ -464,6 +511,7 @@ public class KeyboardPrefs {
             root.put("key_lighting_fx", getKeyLightingFx());
             root.put("arabic_layout_type", getArabicLayoutType());
             root.put("english_layout_type", getEnglishLayoutType());
+            root.put("enabled_keyboard_languages", prefs.getString("enabled_keyboard_languages", "ar,en"));
             root.put("numbers_row_enabled", isNumbersRowEnabled());
             root.put("suggestions_enabled", isSuggestionsEnabled());
             root.put("hamza_ta_fixer", isHamzaTaFixerEnabled());
@@ -490,6 +538,9 @@ public class KeyboardPrefs {
             if (root.has("key_lighting_fx")) setKeyLightingFx(root.getString("key_lighting_fx"));
             if (root.has("arabic_layout_type")) setArabicLayoutType(root.getString("arabic_layout_type"));
             if (root.has("english_layout_type")) setEnglishLayoutType(root.getString("english_layout_type"));
+            if (root.has("enabled_keyboard_languages")) {
+                prefs.edit().putString("enabled_keyboard_languages", root.getString("enabled_keyboard_languages")).apply();
+            }
             if (root.has("numbers_row_enabled")) setNumbersRowEnabled(root.getBoolean("numbers_row_enabled"));
             if (root.has("suggestions_enabled")) setSuggestionsEnabled(root.getBoolean("suggestions_enabled"));
             if (root.has("hamza_ta_fixer")) setHamzaTaFixerEnabled(root.getBoolean("hamza_ta_fixer"));

@@ -8,10 +8,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Defines all keyboard key rows for Arabic (Default unified layout matching spec,
- * iPhone, SwiftKey, PC, Arabic 2), English (QWERTY, AZERTY, QWERTZ, Colemak),
- * Numbers/Symbols, optional Number Row or Emoji Row, Arabic diacritics popups,
- * and long-press Hijri/Gregorian Date & Time triggers.
+ * Defines complete multi-language keyboard layouts:
+ * - Arabic (ar: default unified, iphone, swiftkey, pc, arabic2)
+ * - English (en: qwerty, azerty, qwertz, colemak)
+ * - French (fr: AZERTY + French diacritics)
+ * - Spanish (es: QWERTY with ñ + Spanish diacritics)
+ * - German (de: QWERTZ with ü/ö/ä + ß)
+ * - Russian (ru: ЙЦУКЕН Cyrillic)
+ * Plus Numbers/Symbols, optional Number Row / Emoji Row, and long-press popups.
  */
 public final class KeyboardLayoutData {
 
@@ -24,9 +28,6 @@ public final class KeyboardLayoutData {
     public static final int CODE_LANG_SWITCH = -7;
     public static final int CODE_EMOJI = -8;
     public static final int CODE_SYMBOLS_PAGE2 = -9;
-    public static final int CODE_DATE_GREG = -10;
-    public static final int CODE_DATE_HIJRI = -11;
-    public static final int CODE_TIME_NOW = -12;
 
     public static class KeyItem {
         public final String label;
@@ -88,17 +89,94 @@ public final class KeyboardLayoutData {
         POPUP_MAP.put("ء", new String[]{"ئ", "ؤ", "أ", "إ", "آ", "َ", "ً", "ُ", "ٌ", "ِ", "ٍ", "ْ", "ّ"});
         POPUP_MAP.put(".", new String[]{"؟", "!", "،", "؛", ":", "...", "-", "(", ")", "«", "»"});
         POPUP_MAP.put("،", new String[]{"؟", "؛", "!", "ـ", "َ", "ُ", "ِ", "ّ", "ْ"});
-        POPUP_MAP.put("a", new String[]{"@", "á", "à", "â", "ä", "å"});
+        POPUP_MAP.put(",", new String[]{"!", "?", ";", ":", "-", "'"});
+
+        // Latin accents (English / French / Spanish / German)
+        POPUP_MAP.put("a", new String[]{"à", "á", "â", "ä", "æ", "å", "@"});
         POPUP_MAP.put("e", new String[]{"é", "è", "ê", "ë", "€"});
         POPUP_MAP.put("i", new String[]{"í", "ì", "î", "ï"});
-        POPUP_MAP.put("o", new String[]{"ó", "ò", "ô", "ö", "ø"});
+        POPUP_MAP.put("o", new String[]{"ó", "ò", "ô", "ö", "œ", "ø"});
         POPUP_MAP.put("u", new String[]{"ú", "ù", "û", "ü"});
-        POPUP_MAP.put("s", new String[]{"$", "ß", "š"});
-        POPUP_MAP.put("c", new String[]{"ç", "©", "¢"});
-        POPUP_MAP.put("n", new String[]{"ñ"});
+        POPUP_MAP.put("s", new String[]{"ß", "š", "$"});
+        POPUP_MAP.put("c", new String[]{"ç", "ć", "č", "©"});
+        POPUP_MAP.put("n", new String[]{"ñ", "ń"});
+        POPUP_MAP.put("y", new String[]{"ÿ", "ý"});
+        // Cyrillic popups
+        POPUP_MAP.put("е", new String[]{"ё"});
+        POPUP_MAP.put("ь", new String[]{"ъ"});
     }
 
     private KeyboardLayoutData() {
+    }
+
+    public static String getLanguageDisplayName(String langCode) {
+        if (langCode == null) return "العربية";
+        switch (langCode) {
+            case "ar": return "العربية";
+            case "en": return "English";
+            case "fr": return "Français";
+            case "es": return "Español";
+            case "de": return "Deutsch";
+            case "ru": return "Русский";
+            default: return "English";
+        }
+    }
+
+    public static String getLanguageSpaceLabel(String langCode) {
+        return "‹ " + getLanguageDisplayName(langCode) + " ›";
+    }
+
+    public static String getLanguageSettingsLabel(String langCode) {
+        switch (langCode) {
+            case "ar": return "العربية (Arabic)";
+            case "en": return "English (الإنجليزية)";
+            case "fr": return "Français (الفرنسية — AZERTY)";
+            case "es": return "Español (الإسبانية — QWERTY Ñ)";
+            case "de": return "Deutsch (الألمانية — QWERTZ)";
+            case "ru": return "Русский (الروسية — ЙЦУКЕН)";
+            default: return langCode;
+        }
+    }
+
+    public static List<List<KeyItem>> buildRowsForLanguage(String langCode,
+                                                           boolean showNumbers,
+                                                           boolean showEmojiRow,
+                                                           boolean shifted,
+                                                           String arabicLayoutType,
+                                                           String englishLayoutType,
+                                                           String customArabicJson) {
+        String lang = langCode == null ? "ar" : langCode;
+        switch (lang) {
+            case "ar":
+                return buildArabicRows(showNumbers, showEmojiRow, arabicLayoutType, customArabicJson);
+            case "fr":
+                return buildLatinOrCyrillicRows(showNumbers, showEmojiRow, shifted,
+                        new String[]{"a", "z", "e", "r", "t", "y", "u", "i", "o", "p"},
+                        new String[]{"q", "s", "d", "f", "g", "h", "j", "k", "l", "m"},
+                        new String[]{"w", "x", "c", "v", "b", "n", "'"},
+                        getLanguageSpaceLabel("fr"), false);
+            case "es":
+                return buildLatinOrCyrillicRows(showNumbers, showEmojiRow, shifted,
+                        new String[]{"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
+                        new String[]{"a", "s", "d", "f", "g", "h", "j", "k", "l", "ñ"},
+                        new String[]{"z", "x", "c", "v", "b", "n", "m"},
+                        getLanguageSpaceLabel("es"), false);
+            case "de":
+                return buildLatinOrCyrillicRows(showNumbers, showEmojiRow, shifted,
+                        new String[]{"q", "w", "e", "r", "t", "z", "u", "i", "o", "p", "ü"},
+                        new String[]{"a", "s", "d", "f", "g", "h", "j", "k", "l", "ö", "ä"},
+                        new String[]{"y", "x", "c", "v", "b", "n", "m", "ß"},
+                        getLanguageSpaceLabel("de"), false);
+            case "ru":
+                return buildLatinOrCyrillicRows(showNumbers, showEmojiRow, shifted,
+                        new String[]{"й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"},
+                        new String[]{"ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"},
+                        new String[]{"я", "ч", "с", "м", "и", "т", "ь", "б", "ю"},
+                        getLanguageSpaceLabel("ru"), false);
+            case "en":
+            default:
+                return buildEnglishRows(showNumbers, showEmojiRow, shifted, englishLayoutType);
+        }
     }
 
     public static List<List<KeyItem>> buildArabicRows(boolean showNumbers, boolean showEmojiRow,
@@ -110,30 +188,28 @@ public final class KeyboardLayoutData {
             rows.add(buildSimpleRow(NUMBER_ROW, null));
         }
 
-        // Custom user layout maker override
         if (customLayoutJson != null && !customLayoutJson.trim().isEmpty()) {
             List<List<KeyItem>> parsed = tryParseCustomArabic(customLayoutJson);
             if (!parsed.isEmpty()) {
                 rows.addAll(parsed);
-                rows.add(buildBottomRow("‹ العربية ›", true));
+                rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
                 return rows;
             }
         }
 
         String type = arabicLayoutType == null ? "default" : arabicLayoutType;
         if ("iphone".equals(type)) {
-            // Left-to-right visual order matching iPhone Arabic
             String[] r1 = {"ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"};
             String[] r2 = {"ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"};
             String[] r3 = {"ذ", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ"};
             rows.add(buildSimpleRow(r1, new String[]{"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ""}));
             rows.add(buildSimpleRow(r2, null));
             List<KeyItem> row3 = new ArrayList<>();
-            row3.add(KeyItem.special("د", 0, 1.0f, false));
+            row3.add(KeyItem.ch("د", 1.0f, null, POPUP_MAP.get("د")));
             for (String s : r3) row3.add(KeyItem.ch(s, 1.0f, hintFor(s), POPUP_MAP.get(s)));
             row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.35f, false));
             rows.add(row3);
-            rows.add(buildBottomRow("‹ العربية ›", true));
+            rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
             return rows;
         }
 
@@ -148,7 +224,7 @@ public final class KeyboardLayoutData {
             for (String s : r3) row3.add(KeyItem.ch(s, 1.0f, hintFor(s), POPUP_MAP.get(s)));
             row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.4f, false));
             rows.add(row3);
-            rows.add(buildBottomRow("‹ العربية ›", true));
+            rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
             return rows;
         }
 
@@ -162,7 +238,7 @@ public final class KeyboardLayoutData {
             for (String s : r3) row3.add(KeyItem.ch(s, 1.0f, hintFor(s), POPUP_MAP.get(s)));
             row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.5f, false));
             rows.add(row3);
-            rows.add(buildBottomRow("‹ العربية PC ›", true));
+            rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
             return rows;
         }
 
@@ -177,25 +253,11 @@ public final class KeyboardLayoutData {
             for (String s : r3) row3.add(KeyItem.ch(s, 1.0f, hintFor(s), POPUP_MAP.get(s)));
             row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.4f, false));
             rows.add(row3);
-            rows.add(buildBottomRow("‹ العربية ٢ ›", true));
+            rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
             return rows;
         }
 
-        // DEFAULT UNIFIED ARABIC LAYOUT (Exact RTL visual distribution left->right so right-edge has ض/ش/⌫/Enter):
-        // Visual Right-to-Left reading:
-        // Row 1 (R->L): ض ص ث ق ف غ ع ه خ ح ج  => drawn left-to-right: ج ح خ ه ع غ ف ق ث ص ض
-        // Wait: in Arabic keyboards, ض is on top-left and ج is on top-right OR user specified exact sequence:
-        // User prompt:
-        // Row 1: `ج ح خ ه ع غ ف ق ث ص ض`
-        // Row 2: `ط ك م ن ت ا ل ب ي س ش`
-        // Row 3: `⌫` (right), `د ظ ز و ة ى ر ؤ ء ذ`
-        // Bottom Row: Colored `Enter/Search` (right), `.`, Spacebar `‹ العربية ›`, Emoji, `،`, `?123` (left).
-        // Because Arabic text reads Right-to-Left, listing `ج ح خ ... ض` in RTL text puts `ج` on the right and `ض` on the left,
-        // so rendering left-to-right places:
-        // Row 1 (L->R): ض ص ث ق ف غ ع ه خ ح ج
-        // Row 2 (L->R): ش س ي ب ل ا ت ن م ك ط
-        // Row 3 (L->R): ذ ء ؤ ر ى ة و ز ظ د ⌫ (⌫ on the right!)
-        // Bottom (L->R): ?123, ،, 😊, ‹ العربية ›, ., ↵ (Colored Enter on the right, ?123 on the left!)
+        // DEFAULT UNIFIED ARABIC LAYOUT
         String[] r1 = {"ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"};
         String[] r2 = {"ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"};
         String[] r3 = {"ذ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "د"};
@@ -210,19 +272,12 @@ public final class KeyboardLayoutData {
         row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.45f, false));
         rows.add(row3);
 
-        rows.add(buildBottomRow("‹ العربية ›", true));
+        rows.add(buildBottomRow(getLanguageSpaceLabel("ar"), true));
         return rows;
     }
 
     public static List<List<KeyItem>> buildEnglishRows(boolean showNumbers, boolean showEmojiRow,
                                                        boolean shifted, String englishLayoutType) {
-        List<List<KeyItem>> rows = new ArrayList<>();
-        if (showEmojiRow) {
-            rows.add(buildSimpleRow(QUICK_EMOJI_ROW, null));
-        } else if (showNumbers) {
-            rows.add(buildSimpleRow(NUMBER_ROW, null));
-        }
-
         String type = englishLayoutType == null ? "qwerty" : englishLayoutType;
         String[] r1, r2, r3;
         switch (type) {
@@ -247,24 +302,39 @@ public final class KeyboardLayoutData {
                 r3 = new String[]{"z", "x", "c", "v", "b", "n", "m"};
                 break;
         }
+        return buildLatinOrCyrillicRows(showNumbers, showEmojiRow, shifted, r1, r2, r3,
+                getLanguageSpaceLabel("en"), false);
+    }
 
-        rows.add(buildCaseRow(r1, shifted, new String[]{"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}));
+    private static List<List<KeyItem>> buildLatinOrCyrillicRows(boolean showNumbers, boolean showEmojiRow,
+                                                                boolean shifted, String[] r1, String[] r2,
+                                                                String[] r3, String spaceLabel, boolean isArabic) {
+        List<List<KeyItem>> rows = new ArrayList<>();
+        if (showEmojiRow) {
+            rows.add(buildSimpleRow(QUICK_EMOJI_ROW, null));
+        } else if (showNumbers) {
+            rows.add(buildSimpleRow(NUMBER_ROW, null));
+        }
+
+        String[] numHints = r1.length == 10 ? NUMBER_ROW : null;
+        rows.add(buildCaseRow(r1, shifted, numHints));
         rows.add(buildCaseRow(r2, shifted, null));
 
         List<KeyItem> row3 = new ArrayList<>();
         row3.add(KeyItem.special(shifted ? "⬆" : "⇧", CODE_SHIFT, 1.45f, shifted));
         for (String s : r3) {
-            String out = shifted ? s.toUpperCase() : s;
+            String out = shifted ? upperFor(s) : s;
             row3.add(KeyItem.ch(out, 1.0f, null, POPUP_MAP.get(s)));
         }
         row3.add(KeyItem.special("⌫", CODE_BACKSPACE, 1.45f, false));
         rows.add(row3);
 
-        rows.add(buildBottomRow("‹ English ›", false));
+        rows.add(buildBottomRow(spaceLabel, isArabic));
         return rows;
     }
 
-    public static List<List<KeyItem>> buildSymbolRows(boolean page2, boolean isArabic) {
+    public static List<List<KeyItem>> buildSymbolRows(boolean page2, String activeLangCode) {
+        boolean isArabic = "ar".equals(activeLangCode);
         List<List<KeyItem>> rows = new ArrayList<>();
         String[] r1 = page2
                 ? new String[]{"~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆"}
@@ -286,10 +356,11 @@ public final class KeyboardLayoutData {
         rows.add(row3);
 
         List<KeyItem> bottom = new ArrayList<>();
-        bottom.add(KeyItem.special(isArabic ? "أ ب" : "ABC", CODE_MODE_ALPHA, 1.35f, false));
-        bottom.add(KeyItem.ch(isArabic ? "،" : ",", 0.9f, null, POPUP_MAP.get("،")));
+        bottom.add(KeyItem.special(isArabic ? "أ ب" : ("ru".equals(activeLangCode) ? "АБВ" : "ABC"),
+                CODE_MODE_ALPHA, 1.35f, false));
+        bottom.add(KeyItem.ch(isArabic ? "،" : ",", 0.9f, null, POPUP_MAP.get(isArabic ? "،" : ",")));
         bottom.add(KeyItem.special("😊", CODE_EMOJI, 0.95f, false));
-        bottom.add(new KeyItem("مسافة", " ", "", CODE_SPACE, 3.8f, false, false, null));
+        bottom.add(new KeyItem(getLanguageSpaceLabel(activeLangCode), " ", "", CODE_SPACE, 3.8f, false, false, null));
         bottom.add(KeyItem.ch(".", 0.9f, null, POPUP_MAP.get(".")));
         bottom.add(KeyItem.special("↵", CODE_ENTER, 1.55f, true));
         rows.add(bottom);
@@ -299,12 +370,17 @@ public final class KeyboardLayoutData {
     private static List<KeyItem> buildBottomRow(String spaceLabel, boolean isArabic) {
         List<KeyItem> bottom = new ArrayList<>();
         bottom.add(KeyItem.special("?123", CODE_MODE_SYMBOLS, 1.35f, false));
-        bottom.add(KeyItem.ch(isArabic ? "،" : ",", 0.9f, isArabic ? "؟" : "!", POPUP_MAP.get("،")));
+        bottom.add(KeyItem.ch(isArabic ? "،" : ",", 0.9f, isArabic ? "؟" : "!", POPUP_MAP.get(isArabic ? "،" : ",")));
         bottom.add(KeyItem.special("😊", CODE_EMOJI, 0.95f, false));
         bottom.add(new KeyItem(spaceLabel, " ", "", CODE_SPACE, 3.85f, false, false, null));
-        bottom.add(KeyItem.ch(".", 0.9f, "؟", POPUP_MAP.get(".")));
+        bottom.add(KeyItem.ch(".", 0.9f, isArabic ? "؟" : "!", POPUP_MAP.get(".")));
         bottom.add(KeyItem.special("↵", CODE_ENTER, 1.55f, true));
         return bottom;
+    }
+
+    private static String upperFor(String s) {
+        if ("ß".equals(s)) return "ẞ";
+        return s.toUpperCase();
     }
 
     private static String hintFor(String key) {
@@ -328,7 +404,7 @@ public final class KeyboardLayoutData {
         List<KeyItem> row = new ArrayList<>(labels.length);
         for (int i = 0; i < labels.length; i++) {
             String raw = labels[i];
-            String out = shifted ? raw.toUpperCase() : raw;
+            String out = shifted ? upperFor(raw) : raw;
             String h = (hints != null && i < hints.length) ? hints[i] : null;
             row.add(KeyItem.ch(out, 1.0f, h, POPUP_MAP.get(raw)));
         }

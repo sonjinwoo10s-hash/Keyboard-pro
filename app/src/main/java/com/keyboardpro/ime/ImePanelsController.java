@@ -4,6 +4,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -15,7 +17,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.keyboardpro.data.ClipboardRepository;
 import com.keyboardpro.data.KeyboardPrefs;
@@ -42,6 +43,7 @@ public class ImePanelsController {
 
     public interface Host {
         void commitRaw(String text);
+        void deleteEmojiOrChar(boolean isRepeat);
         void sendKeyEventCode(int androidKeyCode);
         void moveCursor(int steps);
         void performEditAction(String action);
@@ -51,6 +53,7 @@ public class ImePanelsController {
         void runAiAction(AiKeyboardHelper.AiAction action);
         void showToast(String msg);
         KeyboardTheme getActiveKeyboardTheme();
+        String getActiveLanguageCode();
         boolean isLandscape();
     }
 
@@ -83,18 +86,57 @@ public class ImePanelsController {
             {"hide_kb", "⬇️", "إخفاء"}
     };
 
-    private static final String[] EMOJIS = {
-            "😀","😂","🤣","😊","😍","🥰","😘","😎","🤩","🥳","😇","🙏","❤️","🧡","💛","💚",
-            "💙","💜","🖤","🤍","🔥","✨","⭐","🌟","🎉","🎊","👍","👎","👏","🙌","🤝","💪",
-            "👌","✌️","🌹","🌸","🌙","☀️","☕","🎁","💎","👑","💯","✅","❌","⚡","🚀","🎯"
+    private static final String[] EMOJI_CAT_ICONS = {"😀", "❤️", "👍", "🔥", "🌙"};
+    private static final String[][] EMOJI_CATEGORIES = {
+            {
+                    "😀","😃","😄","😁","😆","😅","🤣","😂","🙂","😉","😊","😇","🥰","😍",
+                    "🤩","😘","😗","😚","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔",
+                    "🫡","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","😌","😔","😪","😴",
+                    "😷","🤒","🤕","🤢","🤮","🥵","🥶","😵","🤯","🤠","🥳","😎","🤓","🧐",
+                    "😕","😟","🙁","😮","😯","😲","😳","🥺","🥹","😦","😢","😭","😤","😠"
+            },
+            {
+                    "❤️","🧡","💛","💚","💙","💜","🤎","🖤","🤍","🩷","🩵","🩶","💔","❣️",
+                    "💕","💞","💓","💗","💖","💘","💝","💟","❤️‍🔥","❤️‍🩹","🫶","💋","💯","💢",
+                    "💥","💫","💦","💨","💬","💭","🗯️","💤","💌","💐","🌹","🥀","🌺","🌸",
+                    "🌷","🌻","🌼","🦋","✨","⭐","🌟","🌠","💎","👑","💍","🎁","🎀","🎈"
+            },
+            {
+                    "👍","👎","👌","🤌","🤏","✌️","🤞","🫰","🤟","🤘","🤙","👈","👉","👆",
+                    "👇","☝️","✋","🤚","🖐️","🖖","👋","🤚","💪","🙏","🤝","👏","🙌","👐",
+                    "🤲","🫶","✍️","💅","🤳","🙋","🙆","🙅","🤷","🤦","👨‍👩‍👧‍👦","👨‍💻","👩‍💻","🧑‍🎓"
+            },
+            {
+                    "🔥","✨","⚡","🚀","🎯","🎉","🎊","🏆","🥇","🥈","🥉","⚽","🏀","🎮",
+                    "🎧","🎵","🎶","📸","🎬","📱","💻","⌨️","💡","🔑","🔒","🔓","📌","📍",
+                    "✅","❌","⚠️","❓","❗","♻️","🔔","📣","💬","📢","🕒","📅","💰","💳"
+            },
+            {
+                    "🌙","🕌","🕋","📿","🤲","☀️","🌤️","⛅","🌧️","⛈️","🌈","❄️","🌊","🌍",
+                    "🇸🇦","🇪🇬","🇦🇪","🇰🇼","🇶🇦","🇯🇴","🇲🇦","🇩🇿","🇹🇳","🇵🇸","🇱🇧","🇮🇶","🇴🇲","🇧🇭",
+                    "☕","🍵","🥤","🍕","🍔","🍟","🍰","🍫","🍎","🍓","🍉","🍇","🌴","🌵"
+            }
     };
 
     private final Context ctx;
     private final KeyboardPrefs prefs;
     private final ClipboardRepository clipRepo;
     private final Host host;
+    private final Handler repeatHandler = new Handler(Looper.getMainLooper());
+    private boolean isEmojiDeleteHeld = false;
+
+    private final Runnable emojiDeleteRepeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isEmojiDeleteHeld) {
+                host.deleteEmojiOrChar(true);
+                repeatHandler.postDelayed(this, 75);
+            }
+        }
+    };
 
     private String lastTappedEmoji = "❤️";
+    private int selectedEmojiCategory = 0;
     private String calcExpr = "";
 
     public ImePanelsController(Context ctx, KeyboardPrefs prefs, ClipboardRepository clipRepo, Host host) {
@@ -102,6 +144,11 @@ public class ImePanelsController {
         this.prefs = prefs;
         this.clipRepo = clipRepo;
         this.host = host;
+    }
+
+    public void cancelPendingRepeats() {
+        isEmojiDeleteHeld = false;
+        repeatHandler.removeCallbacks(emojiDeleteRepeatRunnable);
     }
 
     public View buildAllToolsPanel() {
@@ -166,50 +213,155 @@ public class ImePanelsController {
     }
 
     public View buildEmojiPanel() {
+        cancelPendingRepeats();
         KeyboardTheme theme = host.getActiveKeyboardTheme();
         LinearLayout root = createPanelRoot(theme);
-        addPanelHeader(root, "الإيموجي (تكرار سريع 3× / 5× / 7×)", theme);
 
-        // Quick repeat strip
+        // Quick repeat strip (3x / 5x / 7x)
         LinearLayout repeatBar = new LinearLayout(ctx);
         repeatBar.setOrientation(LinearLayout.HORIZONTAL);
         repeatBar.setGravity(Gravity.CENTER_VERTICAL);
-        repeatBar.setPadding(dp(8), dp(2), dp(8), dp(6));
+        repeatBar.setPadding(dp(8), dp(4), dp(8), dp(4));
+        repeatBar.setBackgroundColor(theme.toolbarBgColor);
 
-        int[] counts = {3, 5, 7};
-        for (int n : counts) {
-            TextView rep = createChip(repeatEmoji(lastTappedEmoji, n), theme, true);
+        final TextView[] repeatChips = new TextView[3];
+        final int[] counts = {3, 5, 7};
+        for (int i = 0; i < counts.length; i++) {
+            final int n = counts[i];
+            TextView rep = createChip(repeatEmoji(lastTappedEmoji, n), theme, i == 0);
             rep.setOnClickListener(v -> host.commitRaw(repeatEmoji(lastTappedEmoji, n)));
+            repeatChips[i] = rep;
             repeatBar.addView(rep);
         }
         if (prefs.isEmojiRepeatSuggestions()) {
             root.addView(repeatBar);
         }
 
+        // Scrollable Emoji Grid (weight=1 so bottom bar stays pinned!)
         ScrollView scroll = new ScrollView(ctx);
         GridLayout grid = new GridLayout(ctx);
         grid.setColumnCount(host.isLandscape() ? 10 : 7);
-        grid.setPadding(dp(6), dp(4), dp(6), dp(8));
-
-        for (String em : EMOJIS) {
-            TextView tv = new TextView(ctx);
-            tv.setText(em);
-            tv.setTextSize(22);
-            tv.setGravity(Gravity.CENTER);
-            tv.setPadding(dp(4), dp(6), dp(4), dp(6));
-            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
-            lp.width = 0;
-            lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            tv.setLayoutParams(lp);
-            tv.setOnClickListener(v -> {
-                lastTappedEmoji = em;
-                host.commitRaw(em);
-            });
-            grid.addView(tv);
-        }
+        grid.setPadding(dp(6), dp(4), dp(6), dp(6));
         scroll.addView(grid);
         root.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // Fixed Bottom Bar: [ABC / أ ب]  [Emoji Category Tabs]  [Persistent Backspace ⌫]
+        LinearLayout bottomBar = new LinearLayout(ctx);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        bottomBar.setBackgroundColor(theme.toolbarBgColor);
+        bottomBar.setPadding(dp(6), dp(4), dp(6), dp(4));
+        bottomBar.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+
+        String langCode = host.getActiveLanguageCode();
+        String backLabel = "ar".equals(langCode) ? "أ ب" : ("ru".equals(langCode) ? "АБВ" : "ABC");
+        TextView btnAbc = new TextView(ctx);
+        btnAbc.setText(backLabel);
+        btnAbc.setTextColor(theme.keySpecialTextColor);
+        btnAbc.setTextSize(13);
+        btnAbc.setTypeface(null, Typeface.BOLD);
+        btnAbc.setGravity(Gravity.CENTER);
+        btnAbc.setBackground(pillBg(theme.keySpecialBgColor, theme.keyBorderColor, 10));
+        LinearLayout.LayoutParams abcLp = new LinearLayout.LayoutParams(dp(56), dp(38));
+        abcLp.setMargins(dp(2), 0, dp(4), 0);
+        btnAbc.setLayoutParams(abcLp);
+        btnAbc.setOnClickListener(v -> {
+            cancelPendingRepeats();
+            host.closePanel();
+        });
+        bottomBar.addView(btnAbc);
+
+        // Category Tabs
+        final TextView[] catViews = new TextView[EMOJI_CAT_ICONS.length];
+        Runnable populateGrid = () -> {
+            grid.removeAllViews();
+            int catIdx = Math.max(0, Math.min(EMOJI_CATEGORIES.length - 1, selectedEmojiCategory));
+            for (int c = 0; c < catViews.length; c++) {
+                if (catViews[c] != null) {
+                    boolean active = (c == catIdx);
+                    catViews[c].setBackground(active
+                            ? pillBg(withAlpha(theme.accentColor, 65), theme.accentColor, 10)
+                            : null);
+                }
+            }
+            for (String em : EMOJI_CATEGORIES[catIdx]) {
+                TextView tv = new TextView(ctx);
+                tv.setText(em);
+                tv.setTextSize(22);
+                tv.setGravity(Gravity.CENTER);
+                tv.setPadding(dp(4), dp(6), dp(4), dp(6));
+                GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+                lp.width = 0;
+                lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+                tv.setLayoutParams(lp);
+                tv.setOnClickListener(v -> {
+                    lastTappedEmoji = em;
+                    for (int i = 0; i < counts.length; i++) {
+                        repeatChips[i].setText(repeatEmoji(em, counts[i]));
+                    }
+                    host.commitRaw(em);
+                });
+                grid.addView(tv);
+            }
+            scroll.scrollTo(0, 0);
+        };
+
+        for (int i = 0; i < EMOJI_CAT_ICONS.length; i++) {
+            final int idx = i;
+            TextView tab = new TextView(ctx);
+            tab.setText(EMOJI_CAT_ICONS[i]);
+            tab.setTextSize(17);
+            tab.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, dp(38), 1f);
+            tlp.setMargins(dp(2), 0, dp(2), 0);
+            tab.setLayoutParams(tlp);
+            tab.setOnClickListener(v -> {
+                selectedEmojiCategory = idx;
+                populateGrid.run();
+            });
+            catViews[i] = tab;
+            bottomBar.addView(tab);
+        }
+
+        // Persistent Backspace / Delete (⌫) Button with Tap + Long-Press Continuous Repeat Delete
+        TextView btnBackspace = new TextView(ctx);
+        btnBackspace.setText("⌫");
+        btnBackspace.setTextColor(theme.keySpecialTextColor);
+        btnBackspace.setTextSize(18);
+        btnBackspace.setTypeface(null, Typeface.BOLD);
+        btnBackspace.setGravity(Gravity.CENTER);
+        btnBackspace.setBackground(pillBg(theme.keySpecialBgColor, theme.keyBorderColor, 10));
+        LinearLayout.LayoutParams delLp = new LinearLayout.LayoutParams(dp(56), dp(38));
+        delLp.setMargins(dp(4), 0, dp(2), 0);
+        btnBackspace.setLayoutParams(delLp);
+
+        btnBackspace.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    v.setPressed(true);
+                    btnBackspace.setBackground(pillBg(theme.keyPressedColor, theme.accentColor, 10));
+                    isEmojiDeleteHeld = true;
+                    host.deleteEmojiOrChar(false);
+                    repeatHandler.removeCallbacks(emojiDeleteRepeatRunnable);
+                    repeatHandler.postDelayed(emojiDeleteRepeatRunnable, 340);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    v.setPressed(false);
+                    btnBackspace.setBackground(pillBg(theme.keySpecialBgColor, theme.keyBorderColor, 10));
+                    cancelPendingRepeats();
+                    return true;
+                default:
+                    return false;
+            }
+        });
+        bottomBar.addView(btnBackspace);
+
+        root.addView(bottomBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+
+        populateGrid.run();
         return root;
     }
 

@@ -37,7 +37,7 @@ public class ProKeyboardView extends View {
         void onSwipeDeleteWord();
         void onSwipeTypingResult(List<String> touchedLabels);
         void onTwoFingerSwipe(String direction);
-        void onSpacebarLanguageSwipe();
+        void onSpacebarLanguageSwipe(int directionDelta);
         void onKeyTouched(String matrixAction);
     }
 
@@ -492,10 +492,22 @@ public class ProKeyboardView extends View {
                 float dx = x - downX;
                 float dy = y - downY;
 
-                // Spacebar swipe: cursor control or language switch
+                // Spacebar horizontal swipe: switch language (next/previous) or cursor control
                 if (activeKey.key.code == KeyboardLayoutData.CODE_SPACE) {
                     String mode = prefs.getSpacebarSwipeMode();
-                    if ("cursor".equals(mode)) {
+                    float swipeThreshold = dp(38f);
+                    if ("lang".equals(mode)) {
+                        float deltaX = x - lastSpaceX;
+                        if (Math.abs(deltaX) >= swipeThreshold && Math.abs(dx) > Math.abs(dy)) {
+                            isSpaceSwiping = true;
+                            lastSpaceX = x;
+                            int directionDelta = deltaX > 0 ? 1 : -1;
+                            if (listener != null) {
+                                listener.onKeyTouched("function");
+                                listener.onSpacebarLanguageSwipe(directionDelta);
+                            }
+                        }
+                    } else if ("cursor".equals(mode)) {
                         float stepPx = dp(18f);
                         float delta = x - lastSpaceX;
                         if (Math.abs(delta) >= stepPx) {
@@ -504,9 +516,6 @@ public class ProKeyboardView extends View {
                             lastSpaceX = x;
                             if (listener != null) listener.onCursorMove(steps);
                         }
-                    } else if ("lang".equals(mode) && Math.abs(dx) > dp(44f) && !isSpaceSwiping) {
-                        isSpaceSwiping = true;
-                        if (listener != null) listener.onSpacebarLanguageSwipe();
                     }
                     return true;
                 }

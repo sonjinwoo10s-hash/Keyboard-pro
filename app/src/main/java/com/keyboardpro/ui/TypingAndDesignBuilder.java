@@ -33,6 +33,25 @@ public final class TypingAndDesignBuilder {
     }
 
     public static void buildLanguages(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        root.addView(DetailUiKit.createSectionTitle(ctx, "اللغات المفعّلة (اسحب على المسافة للتبديل الفوري)"));
+        LinearLayout multiLangCard = DetailUiKit.createCard(ctx);
+        multiLangCard.addView(DetailUiKit.createBodyText(ctx,
+                "اختر اللغات التي تريد التبديل بينها عند السحب يميناً أو يساراً على مفتاح المسافة:"));
+        for (String code : KeyboardPrefs.ALL_LANGUAGES) {
+            String label = com.keyboardpro.ime.KeyboardLayoutData.getLanguageSettingsLabel(code);
+            boolean enabled = prefs.isLanguageEnabled(code);
+            multiLangCard.addView(DetailUiKit.createSwitchRow(ctx, label,
+                    "اسم المسافة: " + com.keyboardpro.ime.KeyboardLayoutData.getLanguageDisplayName(code),
+                    enabled, checked -> {
+                        boolean ok = prefs.setLanguageEnabled(code, checked);
+                        if (!ok) {
+                            Toast.makeText(ctx, "يجب بقاء لغة واحدة على الأقل مفعّلة", Toast.LENGTH_SHORT).show();
+                            host.refreshScreen();
+                        }
+                    }));
+        }
+        root.addView(multiLangCard);
+
         root.addView(DetailUiKit.createSectionTitle(ctx, "تخطيط لوحة المفاتيح العربية (5 تخطيطات)"));
         LinearLayout arCard = DetailUiKit.createCard(ctx);
         String curAr = prefs.getArabicLayoutType();

@@ -37,6 +37,7 @@ import com.keyboardpro.data.KeyboardPrefs;
 import com.keyboardpro.ui.MainActivity;
 
 import java.io.File;
+import java.text.BreakIterator;
 import java.util.List;
 import java.util.Locale;
 
@@ -72,7 +73,7 @@ public class KeyboardProService extends InputMethodService
     private PopupWindow popupWindow;
 
     private KeyboardTheme activeTheme;
-    private boolean isArabic = true;
+    private String activeLangCode = "ar";
     private boolean isSymbols = false;
     private boolean isSymbolsPage2 = false;
     private boolean isShifted = false;
@@ -125,7 +126,7 @@ public class KeyboardProService extends InputMethodService
     @Override
     public View onCreateInputView() {
         isLandscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-        isArabic = "ar".equals(prefs.getKeyboardLanguage());
+        syncActiveLanguageFromPrefs();
         activeTheme = ThemeRegistry.getThemeById(this, prefs.getActiveThemeId());
 
         rootLayout = new LinearLayout(this);
@@ -278,7 +279,7 @@ public class KeyboardProService extends InputMethodService
     private void applyThemeAndLayout() {
         if (rootLayout == null || keyboardView == null) return;
         activeTheme = ThemeRegistry.getThemeById(this, prefs.getActiveThemeId());
-        isArabic = "ar".equals(prefs.getKeyboardLanguage());
+        syncActiveLanguageFromPrefs();
 
         rootLayout.setBackgroundColor(activeTheme.toolbarBgColor);
         toolbarRow.setVisibility(prefs.isShowToolbar() ? View.VISIBLE : View.GONE);
@@ -305,22 +306,30 @@ public class KeyboardProService extends InputMethodService
         rebuildRows();
     }
 
+    private void syncActiveLanguageFromPrefs() {
+        List<String> enabled = prefs.getEnabledLanguages();
+        String saved = prefs.getKeyboardLanguage();
+        if (enabled.contains(saved)) {
+            activeLangCode = saved;
+        } else {
+            activeLangCode = enabled.get(0);
+            prefs.setKeyboardLanguage(activeLangCode);
+        }
+    }
+
     private void rebuildRows() {
         List<List<KeyboardLayoutData.KeyItem>> rows;
         if (isSymbols) {
-            rows = KeyboardLayoutData.buildSymbolRows(isSymbolsPage2, isArabic);
-        } else if (isArabic) {
-            rows = KeyboardLayoutData.buildArabicRows(
-                    prefs.isNumbersRowEnabled(),
-                    prefs.isEmojiRowEnabled(),
-                    prefs.getArabicLayoutType(),
-                    prefs.getCustomArabicLayoutJson());
+            rows = KeyboardLayoutData.buildSymbolRows(isSymbolsPage2, activeLangCode);
         } else {
-            rows = KeyboardLayoutData.buildEnglishRows(
+            rows = KeyboardLayoutData.buildRowsForLanguage(
+                    activeLangCode,
                     prefs.isNumbersRowEnabled(),
                     prefs.isEmojiRowEnabled(),
                     isShifted,
-                    prefs.getEnglishLayoutType());
+                    prefs.getArabicLayoutType(),
+                    prefs.getEnglishLayoutType(),
+                    prefs.getCustomArabicLayoutJson());
         }
         keyboardView.setRows(rows);
     }
@@ -463,7 +472,7 @@ public class KeyboardProService extends InputMethodService
         if (!text.trim().isEmpty()) {
             currentWord.append(text);
         }
-        if (isShifted && !isArabic) {
+        if (isShifted && !"ar".equals(activeLangCode)) {
             isShifted = false;
             rebuildRows();
         }
@@ -477,13 +486,7 @@ public class KeyboardProService extends InputMethodService
 
         switch (code) {
             case KeyboardLayoutData.CODE_BACKSPACE:
-                CharSequence sel = ic.getSelectedText(0);
-                if (sel != null && sel.length() > 0) {
-                    ic.commitText("", 1);
-                } else {
-                    ic.deleteSurroundingText(1, 0);
-                }
-                if (currentWord.length() > 0) currentWord.deleteCharAt(currentWord.length() - 1);
+                deleteGraphemeBeforeCursor(ic);
                 refreshSuggestions();
                 break;
 
@@ -572,7 +575,7 @@ public class KeyboardProService extends InputMethodService
 
     @Override
     public void onSwipeTypingResult(List<String> touchedLabels) {
-        String word = wordEngine.resolveSwipePath(touchedLabels, isArabic);
+        String word = wordEngine.resolveSwipePath(touchedLabels, "ar".equals(activeLangCode));
         if (word != null) {
             InputConnection ic = getCurrentInputConnection();
             if (ic != null) {
@@ -595,8 +598,8 @@ public class KeyboardProService extends InputMethodService
     }
 
     @Override
-    public void onSpacebarLanguageSwipe() {
-        toggleLanguage();
+    public void onSpacebarLanguageSwipe(int directionDelta) {
+        switchLanguageByDelta(directionDelta);
     }
 
     @Override
@@ -611,6 +614,16 @@ public class KeyboardProService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
         if (ic != null && text != null) {
             ic.commitText(text, 1);
+        }
+    }
+
+    @Override
+    public void deleteEmojiOrChar(boolean isRepeat) {
+        triggerActionFeedback(isRepeat ? "delete_repeat" : "delete");
+        InputConnection ic = getCurrentInputConnection();
+        if (ic != null) {
+            deleteGraphemeBeforeCursor(ic);
+            refreshSuggestions();
         }
     }
 
@@ -748,6 +761,7 @@ public class KeyboardProService extends InputMethodService
 
     @Override
     public void closePanel() {
+        if (panelsController != null) panelsController.cancelPendingRepeats();
         if (activePanelView != null && bodyContainer != null) {
             bodyContainer.removeView(activePanelView);
             activePanelView = null;
@@ -800,8 +814,67 @@ public class KeyboardProService extends InputMethodService
     }
 
     @Override
+    public String getActiveLanguageCode() {
+        return activeLangCode;
+    }
+
+    @Override
     public boolean isLandscape() {
         return isLandscape;
+    }
+
+    /**
+     * Deletes one complete user-perceived character or multi-codepoint Unicode emoji cluster
+     * (handles surrogate pairs, skin-tone modifiers, flags, variation selectors, and ZWJ sequences)
+     * so broken half-emojis are never left behind.
+     */
+    private void deleteGraphemeBeforeCursor(InputConnection ic) {
+        if (ic == null) return;
+        CharSequence sel = ic.getSelectedText(0);
+        if (sel != null && sel.length() > 0) {
+            ic.commitText("", 1);
+            currentWord.setLength(0);
+            return;
+        }
+
+        CharSequence before = ic.getTextBeforeCursor(32, 0);
+        if (before == null || before.length() == 0) {
+            ic.deleteSurroundingText(1, 0);
+            return;
+        }
+
+        String text = before.toString();
+        int deleteLen = 1;
+        try {
+            BreakIterator it = BreakIterator.getCharacterInstance(Locale.getDefault());
+            it.setText(text);
+            int end = it.last();
+            int prev = it.previous();
+            if (prev != BreakIterator.DONE && end > prev) {
+                deleteLen = end - prev;
+            }
+        } catch (Exception ignored) {
+            // Surrogate pair fallback
+            int len = text.length();
+            if (len >= 2 && Character.isLowSurrogate(text.charAt(len - 1))
+                    && Character.isHighSurrogate(text.charAt(len - 2))) {
+                deleteLen = 2;
+            }
+        }
+
+        // Guard against splitting a surrogate pair
+        int startIdx = text.length() - deleteLen;
+        if (startIdx > 0 && startIdx < text.length()
+                && Character.isLowSurrogate(text.charAt(startIdx))
+                && Character.isHighSurrogate(text.charAt(startIdx - 1))) {
+            deleteLen++;
+        }
+
+        ic.deleteSurroundingText(deleteLen, 0);
+        if (currentWord.length() > 0) {
+            int trim = Math.min(deleteLen, currentWord.length());
+            currentWord.delete(currentWord.length() - trim, currentWord.length());
+        }
     }
 
     // ---- Internal Helpers ----
@@ -843,7 +916,8 @@ public class KeyboardProService extends InputMethodService
     private void refreshSuggestions() {
         if (suggestionsContainer == null || !prefs.isSuggestionsEnabled() || sensitiveFieldActive) return;
         suggestionsContainer.removeAllViews();
-        List<String> list = wordEngine.getSuggestions(currentWord.toString(), previousWord, isArabic, prefs);
+        List<String> list = wordEngine.getSuggestions(currentWord.toString(), previousWord,
+                "ar".equals(activeLangCode), prefs);
         for (String sug : list) {
             TextView tv = new TextView(this);
             tv.setText(sug);
@@ -916,9 +990,21 @@ public class KeyboardProService extends InputMethodService
     }
 
     private void toggleLanguage() {
-        isArabic = !isArabic;
+        switchLanguageByDelta(1);
+    }
+
+    private void switchLanguageByDelta(int delta) {
+        List<String> enabled = prefs.getEnabledLanguages();
+        if (enabled.size() <= 1) return;
+        int curIdx = enabled.indexOf(activeLangCode);
+        if (curIdx < 0) curIdx = 0;
+        int nextIdx = (curIdx + delta) % enabled.size();
+        if (nextIdx < 0) nextIdx += enabled.size();
+
+        activeLangCode = enabled.get(nextIdx);
         isSymbols = false;
-        prefs.setKeyboardLanguage(isArabic ? "ar" : "en");
+        isShifted = false;
+        prefs.setKeyboardLanguage(activeLangCode);
         currentWord.setLength(0);
         rebuildRows();
         refreshSuggestions();
@@ -952,12 +1038,12 @@ public class KeyboardProService extends InputMethodService
         if (tts == null) {
             tts = new TextToSpeech(this, status -> {
                 if (status == TextToSpeech.SUCCESS && tts != null) {
-                    tts.setLanguage(isArabic ? new Locale("ar") : Locale.US);
+                    tts.setLanguage("ar".equals(activeLangCode) ? new Locale("ar") : Locale.US);
                     tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "kb_tts");
                 }
             });
         } else {
-            tts.setLanguage(isArabic ? new Locale("ar") : Locale.US);
+            tts.setLanguage("ar".equals(activeLangCode) ? new Locale("ar") : Locale.US);
             tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "kb_tts");
         }
         closePanel();
