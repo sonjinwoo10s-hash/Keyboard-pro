@@ -1,0 +1,6 @@
+{
+  "name": "كيبورد برو",
+  "description": "تطبيق لوحة مفاتيح عربية وإنجليزية احترافية متكاملة (Keyboard Pro) مع زخرفة فورية وخطوط يونيكود متعددة وثيمات كريستال وزجاج والذكاء الاصطناعي وخزنة كلمات المرور.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

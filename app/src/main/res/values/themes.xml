@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.KeyboardPro" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/kp_primary</item>
+        <item name="colorOnPrimary">@color/kp_on_primary</item>
+        <item name="colorSecondary">@color/kp_secondary</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="android:colorBackground">@color/kp_bg</item>
+        <item name="colorSurface">@color/kp_surface</item>
+        <item name="colorOnSurface">@color/kp_text_primary</item>
+        <item name="colorOutline">@color/kp_stroke</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/kp_bg</item>
+    </style>
+
+    <style name="Theme.KeyboardPro.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="android:background">@color/kp_surface</item>
+        <item name="colorSurface">@color/kp_surface</item>
+        <item name="colorOnSurface">@color/kp_text_primary</item>
+        <item name="colorPrimary">@color/kp_primary</item>
+    </style>
+</resources>
