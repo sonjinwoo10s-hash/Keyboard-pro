@@ -1,13 +1,12 @@
 package com.keyboardpro.ui;
 
-import android.content.ClipData;
-import android.content.ClipboardManager;
+import android.app.AlertDialog;
 import android.content.Context;
-import android.graphics.BitmapFactory;
-import android.graphics.Color;
+import android.graphics.Typeface;
 import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -15,23 +14,19 @@ import android.widget.Toast;
 import androidx.core.content.ContextCompat;
 
 import com.example.R;
-import com.keyboardpro.data.BackupManager;
 import com.keyboardpro.data.ClipboardRepository;
 import com.keyboardpro.data.KeyboardPrefs;
 import com.keyboardpro.data.StickerRepository;
 import com.keyboardpro.data.VaultRepository;
 import com.keyboardpro.ime.AiKeyboardHelper;
 
-import java.io.File;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 /**
- * Builds Settings sub-screens for Emoji Styles, My Stickers, Gestures, Vibration & Sound Packs,
- * Clipboard History, Keyboard Pass (BiometricPrompt Vault), AI Keyboard Config,
- * Local Backup, Google Drive Cloud Sync, and Pro Crown Showcase.
+ * Modular sub-screen builders for Gestures & 2-Finger Swipes, Per-Action Sound/Vibration Matrix (10 actions),
+ * BYOK Gemini AI Keyboard (15 actions + custom tools + persona + usage counter),
+ * Clipboard (3-day expiry / sort / pin), Emoji, Stickers, Biometric Keyboard Pass,
+ * Local Backup & Reset to Defaults, Cloud Sync, and Unlocked Pro Showcase.
  */
 public final class MediaAndSecurityBuilder {
 
@@ -44,411 +39,397 @@ public final class MediaAndSecurityBuilder {
         void refreshScreen();
     }
 
+    private static final String[][] MATRIX_LABELS = {
+            {"letters", "الحروف والأرقام"},
+            {"function", "مفاتيح الوظائف (?123 / Shift)"},
+            {"toolbar", "أيقونات الشريط العلوي"},
+            {"space", "مفتاح المسافة"},
+            {"enter", "مفتاح الإدخال / البحث"},
+            {"delete", "مفتاح المسح (ضغطة)"},
+            {"delete_repeat", "تكرار المسح المطوّل"},
+            {"swipe_delete", "السحب لحذف كلمة"},
+            {"autocorrect", "التصحيح التلقائي"},
+            {"long_press", "الضغط المطوّل"}
+    };
+
     private MediaAndSecurityBuilder() {
+    }
+
+    public static void buildGestures(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "إيماءات الكتابة والمسافة"));
+        card.addView(DetailUiKit.createSwitchRow(ctx, "الكتابة بالسحب (Swipe Typing)",
+                "اسحب إصبعك بين الحروف لكتابة الكلمات بسرعة", prefs.isSwipeTypingEnabled(), prefs::setSwipeTypingEnabled));
+        card.addView(DetailUiKit.createSwitchRow(ctx, "السحب من زر المسح لحذف كلمة",
+                "اسحب يساراً من مفتاح ⌫ لحذف الكلمة كاملة", prefs.isSwipeToDeleteEnabled(), prefs::setSwipeToDeleteEnabled));
+        card.addView(DetailUiKit.createSwitchRow(ctx, "الحرف الأساسي أولاً عند الضغط المطوّل",
+                "إظهار الحرف الأصلي كأول خيار في القائمة المنبثقة", prefs.isLetterFirstLongPress(), prefs::setLetterFirstLongPress));
+        card.addView(DetailUiKit.createSliderRow(ctx, "تأخير الضغط المطوّل", 150, 700,
+                prefs.getLongPressDelayMs(), "ms", prefs::setLongPressDelayMs));
+
+        card.addView(DetailUiKit.createBodyText(ctx, "سلوك السحب على مفتاح المسافة:"));
+        String spMode = prefs.getSpacebarSwipeMode();
+        card.addView(DetailUiKit.createChipOption(ctx, "تحريك المؤشر بدقة (Cursor Control)", "cursor".equals(spMode), v -> {
+            prefs.setSpacebarSwipeMode("cursor"); host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createChipOption(ctx, "تبديل اللغة (عربي ⇄ English)", "lang".equals(spMode), v -> {
+            prefs.setSpacebarSwipeMode("lang"); host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createChipOption(ctx, "إيقاف سحب المسافة", "off".equals(spMode), v -> {
+            prefs.setSpacebarSwipeMode("off"); host.refreshScreen();
+        }));
+        root.addView(card);
+
+        // 2-Finger Swipes
+        LinearLayout twoCard = DetailUiKit.createCard(ctx);
+        twoCard.addView(DetailUiKit.createSectionTitle(ctx, "إيماءات السحب بإصبعين (4 اتجاهات)"));
+        String[][] dirs = {{"up", "سحب إصبعين للأعلى ↑"}, {"down", "سحب إصبعين للأسفل ↓"},
+                {"left", "سحب إصبعين لليسار ←"}, {"right", "سحب إصبعين لليمين →"}};
+        String[] actions = {"select_all", "copy", "paste", "cut", "hide", "none"};
+        String[] actionNames = {"تحديد الكل", "نسخ", "لصق", "قص", "إخفاء الكيبورد", "بدون إجراء"};
+
+        for (String[] d : dirs) {
+            String curAct = prefs.getTwoFingerSwipeAction(d[0]);
+            String curName = actionLabel(curAct, actions, actionNames);
+            twoCard.addView(DetailUiKit.createChipOption(ctx, d[1] + "  :  " + curName, false, v -> {
+                new AlertDialog.Builder(ctx)
+                        .setTitle(d[1])
+                        .setItems(actionNames, (dlg, idx) -> {
+                            prefs.setTwoFingerSwipeAction(d[0], actions[idx]);
+                            host.refreshScreen();
+                        }).show();
+            }));
+        }
+        root.addView(twoCard);
+    }
+
+    public static void buildHapticsAndSound(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
+        LinearLayout masterCard = DetailUiKit.createCard(ctx);
+        masterCard.addView(DetailUiKit.createSectionTitle(ctx, "التحكم العام بالاهتزاز والصوت"));
+        masterCard.addView(DetailUiKit.createSwitchRow(ctx, "تفعيل الاهتزاز عند اللمس",
+                "استجابة لمسية فورية", prefs.isVibrationEnabled(), prefs::setVibrationEnabled));
+        masterCard.addView(DetailUiKit.createSliderRow(ctx, "مدة وقوة الاهتزاز", 5, 60,
+                prefs.getVibrationStrengthMs(), "ms", prefs::setVibrationStrengthMs));
+        masterCard.addView(DetailUiKit.createSwitchRow(ctx, "تفعيل صوت نقرات المفاتيح",
+                "تشغيل صوت خفيف عند الضغط", prefs.isKeySoundEnabled(), prefs::setKeySoundEnabled));
+        masterCard.addView(DetailUiKit.createSliderRow(ctx, "مستوى صوت النقرات", 0, 100,
+                prefs.getSoundVolumePct(), "%", prefs::setSoundVolumePct));
+
+        String pack = prefs.getSoundPack();
+        masterCard.addView(DetailUiKit.createBodyText(ctx, "حزمة الصوت:"));
+        masterCard.addView(DetailUiKit.createChipOption(ctx, "💎 صوت كريستال ناعم", KeyboardPrefs.SOUND_PACK_CRYSTAL.equals(pack), v -> {
+            prefs.setSoundPack(KeyboardPrefs.SOUND_PACK_CRYSTAL); host.refreshScreen();
+        }));
+        masterCard.addView(DetailUiKit.createChipOption(ctx, "⌨️ صوت كيبورد ميكانيكي", KeyboardPrefs.SOUND_PACK_MECHANICAL.equals(pack), v -> {
+            prefs.setSoundPack(KeyboardPrefs.SOUND_PACK_MECHANICAL); host.refreshScreen();
+        }));
+        masterCard.addView(DetailUiKit.createChipOption(ctx, "📱 صوت آيفون كلاسيكي", KeyboardPrefs.SOUND_PACK_IPHONE.equals(pack), v -> {
+            prefs.setSoundPack(KeyboardPrefs.SOUND_PACK_IPHONE); host.refreshScreen();
+        }));
+        masterCard.addView(DetailUiKit.createChipOption(ctx, "🔇 صامت", KeyboardPrefs.SOUND_PACK_SILENT.equals(pack), v -> {
+            prefs.setSoundPack(KeyboardPrefs.SOUND_PACK_SILENT); host.refreshScreen();
+        }));
+        root.addView(masterCard);
+
+        // Full 10-Action Per-Action Sound/Vibration Matrix
+        LinearLayout matrixCard = DetailUiKit.createCard(ctx);
+        matrixCard.addView(DetailUiKit.createSectionTitle(ctx, "مصفوفة الصوت والاهتزاز (10 إجراءات مستقلة)"));
+        matrixCard.addView(DetailUiKit.createBodyText(ctx, "تحكم مستقل بتشغيل الصوت 🔊 والاهتزاز 📳 لكل نوع مفتاح:"));
+
+        for (String[] item : MATRIX_LABELS) {
+            final String key = item[0];
+            LinearLayout row = new LinearLayout(ctx);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, DetailUiKit.dp(ctx, 4), 0, DetailUiKit.dp(ctx, 4));
+
+            TextView lbl = new TextView(ctx);
+            lbl.setText(item[1]);
+            lbl.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
+            lbl.setTextSize(13);
+            lbl.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            row.addView(lbl);
+
+            CheckBox cbSnd = new CheckBox(ctx);
+            cbSnd.setText("🔊");
+            cbSnd.setChecked(prefs.isActionSoundEnabled(key));
+            cbSnd.setOnCheckedChangeListener((b, c) -> prefs.setActionSoundEnabled(key, c));
+            row.addView(cbSnd);
+
+            CheckBox cbVib = new CheckBox(ctx);
+            cbVib.setText("📳");
+            cbVib.setChecked(prefs.isActionVibeEnabled(key));
+            cbVib.setOnCheckedChangeListener((b, c) -> prefs.setActionVibeEnabled(key, c));
+            row.addView(cbVib);
+
+            matrixCard.addView(row);
+        }
+        root.addView(matrixCard);
+    }
+
+    public static void buildAiKeyboard(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
+        LinearLayout keyCard = DetailUiKit.createCard(ctx);
+        keyCard.addView(DetailUiKit.createSectionTitle(ctx, "إعداد مفتاح Google Gemini API (BYOK مشفّر)"));
+        keyCard.addView(DetailUiKit.createBodyText(ctx,
+                "مفتاحك يُخزّن محلياً بتشفير AES-256 داخل AndroidKeyStore ولا يغادر جهازك إلا للاتصال المباشر مع خوادم Gemini."));
+
+        EditText etKey = DetailUiKit.createInput(ctx, "أدخل مفتاح Gemini API هنا...", true);
+        etKey.setText(prefs.getAiApiKey());
+        keyCard.addView(etKey);
+
+        String curModel = prefs.getAiModel();
+        keyCard.addView(DetailUiKit.createBodyText(ctx, "النموذج المستخدم:"));
+        String[] models = {"gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"};
+        for (String m : models) {
+            keyCard.addView(DetailUiKit.createChipOption(ctx, m, m.equals(curModel), v -> {
+                prefs.setAiModel(m); host.refreshScreen();
+            }));
+        }
+
+        EditText etPersona = DetailUiKit.createInput(ctx, "نبذة عني (About Me Persona) — مثال: مهندس برمجيات أكتب بأسلوب مهني مختصر", false);
+        etPersona.setText(prefs.getAiAboutMePersona());
+        keyCard.addView(etPersona);
+
+        keyCard.addView(DetailUiKit.createPrimaryButton(ctx, "🔒 حفظ المفتاح والشخصية بأمان", v -> {
+            prefs.setAiApiKey(etKey.getText().toString().trim());
+            prefs.setAiAboutMePersona(etPersona.getText().toString().trim());
+            Toast.makeText(ctx, "تم تشفير وحفظ إعدادات Gemini بنجاح ✅", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
+        }));
+
+        keyCard.addView(DetailUiKit.createBodyText(ctx,
+                "إحصائيات استخدامك المحلي:  " + prefs.getAiRequestCount() + " طلب  •  ~" + prefs.getAiTokenCount() + " توكن"));
+        root.addView(keyCard);
+
+        // Add Custom AI Tool
+        LinearLayout addToolCard = DetailUiKit.createCard(ctx);
+        addToolCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة أداة ذكاء اصطناعي مخصصة"));
+        EditText etToolName = DetailUiKit.createInput(ctx, "اسم الأداة (مثال: ✉️ رد بريد رسمي)", false);
+        EditText etToolPrompt = DetailUiKit.createInput(ctx, "التعليمات (Prompt) للذكاء الاصطناعي...", false);
+        addToolCard.addView(etToolName);
+        addToolCard.addView(etToolPrompt);
+        addToolCard.addView(DetailUiKit.createPrimaryButton(ctx, "+ إضافة الأداة لشريط الذكاء", v -> {
+            String n = etToolName.getText().toString().trim();
+            String p = etToolPrompt.getText().toString().trim();
+            if (n.isEmpty() || p.isEmpty()) return;
+            AiKeyboardHelper.addCustomAction(prefs, n, p);
+            Toast.makeText(ctx, "تمت إضافة الأداة المخصصة ✅", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
+        }));
+        root.addView(addToolCard);
+
+        // List all 15+ available actions
+        LinearLayout actionsCard = DetailUiKit.createCard(ctx);
+        List<AiKeyboardHelper.AiAction> actions = AiKeyboardHelper.getAllActions(prefs);
+        actionsCard.addView(DetailUiKit.createSectionTitle(ctx, "الأدوات المتاحة داخل الكيبورد (" + actions.size() + " أداة)"));
+        for (AiKeyboardHelper.AiAction a : actions) {
+            actionsCard.addView(DetailUiKit.createBodyText(ctx, "• " + a.label));
+        }
+        root.addView(actionsCard);
+    }
+
+    public static void buildClipboard(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
+        ClipboardRepository repo = new ClipboardRepository(ctx);
+        LinearLayout optCard = DetailUiKit.createCard(ctx);
+        optCard.addView(DetailUiKit.createSectionTitle(ctx, "إعدادات الحافظة الذكية"));
+        optCard.addView(DetailUiKit.createSwitchRow(ctx, "حذف تلقائي بعد 3 أيام للعناصر غير المثبتة",
+                "يحافظ على خصوصيتك وخفة قاعدة البيانات", prefs.isClipboardAutoDelete3Days(), prefs::setClipboardAutoDelete3Days));
+        optCard.addView(DetailUiKit.createSwitchRow(ctx, "ترتيب الأحدث أولاً",
+                "إظهار آخر ما تم نسخه في الأعلى", prefs.isClipboardSortNewest(), v -> {
+                    prefs.setClipboardSortNewest(v); host.refreshScreen();
+                }));
+        optCard.addView(DetailUiKit.createSwitchRow(ctx, "اللصق السريع من شريط الأدوات",
+                "تفعيل أداة اللصق السريع الفوري", prefs.isClipboardQuickPaste(), prefs::setClipboardQuickPaste));
+        optCard.addView(DetailUiKit.createSwitchRow(ctx, "تأكيد قبل مسح الحافظة",
+                "إظهار رسالة تأكيد لحماية نصوصك", prefs.isClipboardConfirmClear(), prefs::setClipboardConfirmClear));
+        optCard.addView(DetailUiKit.createPrimaryButton(ctx, "🗑 مسح جميع العناصر غير المثبتة", v -> {
+            Runnable doClear = () -> {
+                repo.clearUnpinned();
+                Toast.makeText(ctx, "تم مسح العناصر غير المثبتة", Toast.LENGTH_SHORT).show();
+                host.refreshScreen();
+            };
+            if (prefs.isClipboardConfirmClear()) {
+                new AlertDialog.Builder(ctx)
+                        .setTitle("تأكيد مسح الحافظة")
+                        .setMessage("هل تريد مسح جميع العناصر غير المثبتة؟")
+                        .setPositiveButton("مسح", (d, w) -> doClear.run())
+                        .setNegativeButton("إلغاء", null).show();
+            } else {
+                doClear.run();
+            }
+        }));
+        root.addView(optCard);
+
+        LinearLayout listCard = DetailUiKit.createCard(ctx);
+        listCard.addView(DetailUiKit.createSectionTitle(ctx, "العناصر المحفوظة"));
+        List<ClipboardRepository.ClipItem> clips = repo.getClips(30, prefs.isClipboardSortNewest(), prefs.isClipboardAutoDelete3Days());
+        if (clips.isEmpty()) {
+            listCard.addView(DetailUiKit.createBodyText(ctx, "لا توجد عناصر محفوظة في الحافظة حالياً."));
+        } else {
+            for (ClipboardRepository.ClipItem item : clips) {
+                listCard.addView(DetailUiKit.createChipOption(ctx,
+                        (item.pinned ? "📌 " : "") + item.text, item.pinned, v -> {
+                            repo.togglePin(item.id);
+                            host.refreshScreen();
+                        }));
+            }
+        }
+        root.addView(listCard);
     }
 
     public static void buildEmojiStyles(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
         LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "أنماط الإيموجي (Emoji Styles)"));
-        card.addView(DetailUiKit.createBodyText(ctx, "معاينة: 😀 🤩 👑 💎 🔥 ✨ ❤️ 🚀 🌙 🎉"));
+        card.addView(DetailUiKit.createSectionTitle(ctx, "أنماط وخيارات الإيموجي"));
+        card.addView(DetailUiKit.createSwitchRow(ctx, "شريط تكرار الإيموجي السريع (3× / 5× / 7×)",
+                "إرسال الإيموجي مكرراً بضغطة واحدة", prefs.isEmojiRepeatSuggestions(), prefs::setEmojiRepeatSuggestions));
+        card.addView(DetailUiKit.createSwitchRow(ctx, "الضغط المطوّل على Enter لفتح الإيموجي",
+                "وصول فوري للوحة الإيموجي", prefs.isEnterLongPressEmoji(), prefs::setEnterLongPressEmoji));
 
-        String cur = prefs.getEmojiStyle();
-        String[][] styles = {
-                {KeyboardPrefs.EMOJI_STYLE_FLUENT, "Fluent 3D (إيموجي ثلاثي الأبعاد — برو)"},
-                {KeyboardPrefs.EMOJI_STYLE_TWITTER, "Twitter / Twemoji (إيموجي تويتر المسطح)"},
-                {KeyboardPrefs.EMOJI_STYLE_GOOGLE, "Google Noto (إيموجي جوجل الأصلي)"},
-                {KeyboardPrefs.EMOJI_STYLE_CUSTOM, "ملف إيموجي مخصص (TTF)"}
-        };
-
-        for (String[] s : styles) {
-            card.addView(DetailUiKit.createChipOption(ctx, s[1], s[0].equals(cur), v -> {
-                prefs.setEmojiStyle(s[0]);
-                Toast.makeText(ctx, "تم اختيار نمط: " + s[1], Toast.LENGTH_SHORT).show();
-                host.refreshScreen();
-            }));
-        }
-
-        card.addView(DetailUiKit.createPrimaryButton(ctx, "استيراد ملف إيموجي مخصص (.ttf)", v -> host.pickEmojiFontFile()));
-        if (!prefs.getCustomEmojiFontPath().isEmpty()) {
-            card.addView(DetailUiKit.createBodyText(ctx, "الملف المستورد: " + prefs.getCustomEmojiFontPath()));
-        }
+        String style = prefs.getEmojiStyle();
+        card.addView(DetailUiKit.createChipOption(ctx, "Fluent 3D (الافتراضي)", KeyboardPrefs.EMOJI_STYLE_FLUENT.equals(style), v -> {
+            prefs.setEmojiStyle(KeyboardPrefs.EMOJI_STYLE_FLUENT); host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createChipOption(ctx, "Twitter / Twemoji", KeyboardPrefs.EMOJI_STYLE_TWITTER.equals(style), v -> {
+            prefs.setEmojiStyle(KeyboardPrefs.EMOJI_STYLE_TWITTER); host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createChipOption(ctx, "Google Noto Emoji", KeyboardPrefs.EMOJI_STYLE_GOOGLE.equals(style), v -> {
+            prefs.setEmojiStyle(KeyboardPrefs.EMOJI_STYLE_GOOGLE); host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "📂 استيراد ملف إيموجي مخصص (.ttf)", v -> host.pickEmojiFontFile()));
         root.addView(card);
     }
 
     public static void buildStickers(Context ctx, LinearLayout root, SecurityHostActions host) {
         StickerRepository repo = new StickerRepository(ctx);
-
-        LinearLayout createCard = DetailUiKit.createCard(ctx);
-        createCard.addView(DetailUiKit.createSectionTitle(ctx, "صانع ملصقاتي السريع (من نص أو صورة)"));
-        EditText etText = DetailUiKit.createInput(ctx, "اكتب عبارة لإنشاء ملصق فوري (مثلاً: يا هلا ✨)...", false);
-        createCard.addView(etText);
-        createCard.addView(DetailUiKit.createPrimaryButton(ctx, "إنشاء ملصق من النص", v -> {
-            String txt = etText.getText().toString().trim();
-            if (txt.isEmpty()) return;
-            repo.createTextSticker(txt, Color.parseColor("#00D4FF"), Color.parseColor("#6366F1"), false);
-            Toast.makeText(ctx, "تم إنشاء الملصق وإضافته للوحة المفاتيح!", Toast.LENGTH_SHORT).show();
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "صانع الملصقات السريع"));
+        EditText etTxt = DetailUiKit.createInput(ctx, "اكتب نص الملصق (مثال: أحسنت 🔥)", false);
+        card.addView(etTxt);
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "✨ إنشاء ملصق نصي", v -> {
+            String t = etTxt.getText().toString().trim();
+            if (t.isEmpty()) return;
+            repo.createTextSticker(t, 0xFF4E6BFF, 0xFFFFFFFF, false);
+            Toast.makeText(ctx, "تم حفظ الملصق ✅", Toast.LENGTH_SHORT).show();
             host.refreshScreen();
         }));
-        createCard.addView(DetailUiKit.createChipOption(ctx, "📷 إنشاء ملصق من صورة (بدون صلاحيات تخزين)", false,
-                v -> host.pickStickerPhoto()));
-        root.addView(createCard);
-
-        LinearLayout listCard = DetailUiKit.createCard(ctx);
-        listCard.addView(DetailUiKit.createSectionTitle(ctx, "ملصقاتي والحزم الحصرية"));
-        for (StickerRepository.StickerItem s : repo.getStickers()) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, DetailUiKit.dp(ctx, 6), 0, DetailUiKit.dp(ctx, 6));
-
-            ImageView iv = new ImageView(ctx);
-            int thumbSize = DetailUiKit.dp(ctx, 52);
-            if (s.filePath != null && new File(s.filePath).exists()) {
-                iv.setImageBitmap(com.keyboardpro.data.BitmapUtils.decodeSampledFromFile(s.filePath, thumbSize, thumbSize));
-            }
-            row.addView(iv, new LinearLayout.LayoutParams(thumbSize, thumbSize));
-
-            TextView tv = new TextView(ctx);
-            tv.setText(s.label + (s.isExclusive ? "  👑 حصري" : ""));
-            tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
-            tv.setPadding(DetailUiKit.dp(ctx, 12), 0, DetailUiKit.dp(ctx, 8), 0);
-            row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView del = new TextView(ctx);
-            del.setText("حذف");
-            del.setTextColor(ContextCompat.getColor(ctx, R.color.kp_danger));
-            del.setOnClickListener(v -> {
-                repo.deleteSticker(s.id);
-                host.refreshScreen();
-            });
-            row.addView(del);
-            listCard.addView(row);
-        }
-        root.addView(listCard);
-    }
-
-    public static void buildGestures(Context ctx, LinearLayout root, KeyboardPrefs prefs) {
-        LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "إيماءات السحب الذكية"));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "الكتابة بالسحب (Swipe Typing)",
-                "مرر إصبعك بين الأحرف مع أثر نيون مضيء لكتابة الكلمات بسرعة",
-                prefs.isSwipeTypingEnabled(), prefs::setSwipeTypingEnabled));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "تحريك المؤشر من المسافة",
-                "اسحب يميناً أو يساراً على زر المسافة لتحريك مؤشر الكتابة بدقة",
-                prefs.isCursorControlEnabled(), prefs::setCursorControlEnabled));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "السحب للحذف السريع",
-                "اسحب من زر الحذف ⌫ لحذف كلمة كاملة دفعة واحدة",
-                prefs.isSwipeToDeleteEnabled(), prefs::setSwipeToDeleteEnabled));
-        root.addView(card);
-    }
-
-    public static void buildHapticsAndSound(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
-        LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "الاهتزاز والاستجابة اللمسية"));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "اهتزاز عند الضغط",
-                "تفعيل الاهتزاز الخفيف عند لمس المفاتيح",
-                prefs.isVibrationEnabled(), prefs::setVibrationEnabled));
-        card.addView(DetailUiKit.createSliderRow(ctx, "قوة الاهتزاز", 5, 55,
-                prefs.getVibrationStrengthMs(), "ms", prefs::setVibrationStrengthMs));
+        card.addView(DetailUiKit.createChipOption(ctx, "📷 إنشاء ملصق من صورة (Photo Picker بدون صلاحيات)", true, v ->
+                host.pickStickerPhoto()));
         root.addView(card);
 
-        LinearLayout soundCard = DetailUiKit.createCard(ctx);
-        soundCard.addView(DetailUiKit.createSectionTitle(ctx, "حزم أصوات المفاتيح الحصرية"));
-        soundCard.addView(DetailUiKit.createSwitchRow(ctx, "صوت المفاتيح",
-                "تشغيل المؤثرات الصوتية عند الكتابة",
-                prefs.isKeySoundEnabled(), prefs::setKeySoundEnabled));
-
-        String cur = prefs.getSoundPack();
-        String[][] packs = {
-                {KeyboardPrefs.SOUND_PACK_CRYSTAL, "💎 كريستال زجاجي (حصري برو)"},
-                {KeyboardPrefs.SOUND_PACK_MECHANICAL, "⌨️ ميكانيكي أزرق (Mechanical)"},
-                {KeyboardPrefs.SOUND_PACK_IPHONE, "📱 نقرة آيفون الناعمة"},
-                {KeyboardPrefs.SOUND_PACK_SILENT, "🔇 صامت"}
-        };
-        for (String[] p : packs) {
-            soundCard.addView(DetailUiKit.createChipOption(ctx, p[1], p[0].equals(cur), v -> {
-                prefs.setSoundPack(p[0]);
-                host.refreshScreen();
-            }));
-        }
-        root.addView(soundCard);
-    }
-
-    public static void buildClipboard(Context ctx, LinearLayout root, SecurityHostActions host) {
-        ClipboardRepository repo = new ClipboardRepository(ctx);
-
-        LinearLayout addCard = DetailUiKit.createCard(ctx);
-        addCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة نص للحافظة"));
-        EditText etClip = DetailUiKit.createInput(ctx, "أضف نصاً متكرراً لتثبيته في الحافظة...", false);
-        addCard.addView(etClip);
-        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ في الحافظة", v -> {
-            if (!etClip.getText().toString().trim().isEmpty()) {
-                repo.addClip(etClip.getText().toString().trim());
-                host.refreshScreen();
-            }
-        }));
-        addCard.addView(DetailUiKit.createChipOption(ctx, "مسح العناصر غير المثبتة", false, v -> {
-            repo.clearUnpinned();
-            host.refreshScreen();
-        }));
-        root.addView(addCard);
-
         LinearLayout listCard = DetailUiKit.createCard(ctx);
-        listCard.addView(DetailUiKit.createSectionTitle(ctx, "سجل الحافظة المحفوظ"));
-        List<ClipboardRepository.ClipItem> clips = repo.getClips();
-        if (clips.isEmpty()) {
-            listCard.addView(DetailUiKit.createBodyText(ctx, "الحافظة فارغة حالياً. انسخ أي نص أو أضف عنصراً أعلاه."));
-        }
-        for (ClipboardRepository.ClipItem clip : clips) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, DetailUiKit.dp(ctx, 6), 0, DetailUiKit.dp(ctx, 6));
-
-            TextView tv = new TextView(ctx);
-            tv.setText((clip.pinned ? "📌 " : "") + clip.text);
-            tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
-            tv.setOnClickListener(v -> {
-                ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    cm.setPrimaryClip(ClipData.newPlainText("clip", clip.text));
-                    Toast.makeText(ctx, "تم النسخ!", Toast.LENGTH_SHORT).show();
-                }
-            });
-            row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView pin = new TextView(ctx);
-            pin.setText(clip.pinned ? "إلغاء تثبيت" : "تثبيت");
-            pin.setTextColor(ContextCompat.getColor(ctx, R.color.kp_primary));
-            pin.setPadding(DetailUiKit.dp(ctx, 8), 0, DetailUiKit.dp(ctx, 8), 0);
-            pin.setOnClickListener(v -> {
-                repo.togglePin(clip.id);
-                host.refreshScreen();
-            });
-            row.addView(pin);
-
-            TextView del = new TextView(ctx);
-            del.setText("حذف");
-            del.setTextColor(ContextCompat.getColor(ctx, R.color.kp_danger));
-            del.setOnClickListener(v -> {
-                repo.deleteClip(clip.id);
-                host.refreshScreen();
-            });
-            row.addView(del);
-            listCard.addView(row);
+        listCard.addView(DetailUiKit.createSectionTitle(ctx, "ملصقاتي المحفوظة"));
+        List<StickerRepository.StickerItem> items = repo.getStickers();
+        if (items.isEmpty()) {
+            listCard.addView(DetailUiKit.createBodyText(ctx, "لم تقم بإنشاء ملصقات بعد."));
+        } else {
+            for (StickerRepository.StickerItem s : items) {
+                listCard.addView(DetailUiKit.createChipOption(ctx, "🎨 " + s.label + "   ✕", false, v -> {
+                    repo.deleteSticker(s.id);
+                    host.refreshScreen();
+                }));
+            }
         }
         root.addView(listCard);
     }
 
     public static void buildKeyboardPass(Context ctx, LinearLayout root, SecurityHostActions host) {
         VaultRepository vault = new VaultRepository(ctx);
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "Keyboard Pass — خزنة البصمة المشفّرة (AES-256)"));
+        card.addView(DetailUiKit.createBodyText(ctx,
+                "احفظ أرقام الآيبان والحسابات والعناوين بشكل مشفّر محلياً وافتحها ببصمة الإصبع فقط."));
 
-        if (!vault.isSessionUnlocked()) {
-            LinearLayout lockCard = DetailUiKit.createCard(ctx);
-            lockCard.addView(DetailUiKit.createSectionTitle(ctx, "🔐 Keyboard Pass — خزنة البصمة المشفرة"));
-            lockCard.addView(DetailUiKit.createBodyText(ctx,
-                    "احفظ حساباتك، أرقام البطاقات، ورقم الآيبان بتشفير AES-256-GCM داخل AndroidKeyStore.\nبعد فتح الخزنة ببصمة الإصبع، يمكنك الكتابة التلقائية مباشرة من شريط الكيبورد لمدة دقيقتين."));
-            lockCard.addView(DetailUiKit.createPrimaryButton(ctx, "المصادقة ببصمة الإصبع 🔓", v ->
-                    host.authenticateVaultBiometric(() -> {
-                        vault.markSessionUnlocked(120_000L);
-                        Toast.makeText(ctx, "تم فتح Keyboard Pass بنجاح!", Toast.LENGTH_SHORT).show();
+        LinearLayout unlockedBox = new LinearLayout(ctx);
+        unlockedBox.setOrientation(LinearLayout.VERTICAL);
+
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "🔓 فتح الخزنة ببصمة الإصبع", v ->
+                host.authenticateVaultBiometric(() -> {
+                    vault.markSessionUnlocked(120_000L);
+                    unlockedBox.removeAllViews();
+                    EditText etLabel = DetailUiKit.createInput(ctx, "العنوان (مثال: آيبان البنك)", false);
+                    EditText etSecret = DetailUiKit.createInput(ctx, "البيانات السرية", false);
+                    unlockedBox.addView(etLabel);
+                    unlockedBox.addView(etSecret);
+                    unlockedBox.addView(DetailUiKit.createPrimaryButton(ctx, "+ حفظ في الخزنة المشفرة", v2 -> {
+                        String l = etLabel.getText().toString().trim();
+                        String s = etSecret.getText().toString().trim();
+                        if (l.isEmpty() || s.isEmpty()) return;
+                        vault.addItem("account", l, "", s);
+                        Toast.makeText(ctx, "تم التشفير والحفظ بأمان 🔒", Toast.LENGTH_SHORT).show();
                         host.refreshScreen();
-                    })));
-            root.addView(lockCard);
-            return;
-        }
-
-        LinearLayout addCard = DetailUiKit.createCard(ctx);
-        addCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة سجل مشفر جديد (مفتوح بالبصمة ✓)"));
-        EditText etLabel = DetailUiKit.createInput(ctx, "العنوان (مثلاً: آيبان البنك الأهلي / حساب جوجل)", false);
-        EditText etMeta = DetailUiKit.createInput(ctx, "النوع أو اسم المستخدم (IBAN / Email / Card)", false);
-        EditText etSecret = DetailUiKit.createInput(ctx, "القيمة السرية للكتابة التلقائية", true);
-        addCard.addView(etLabel);
-        addCard.addView(etMeta);
-        addCard.addView(etSecret);
-        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ بتشفير AES-256", v -> {
-            String l = etLabel.getText().toString().trim();
-            String m = etMeta.getText().toString().trim();
-            String s = etSecret.getText().toString().trim();
-            if (l.isEmpty() || s.isEmpty()) {
-                Toast.makeText(ctx, "أدخل العنوان والقيمة السرية", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            vault.addItem("secret", l, m, s);
-            host.refreshScreen();
-        }));
-        addCard.addView(DetailUiKit.createChipOption(ctx, "قفل الخزنة الآن 🔒", false, v -> {
-            vault.lockSession();
-            host.refreshScreen();
-        }));
-        root.addView(addCard);
-
-        LinearLayout itemsCard = DetailUiKit.createCard(ctx);
-        itemsCard.addView(DetailUiKit.createSectionTitle(ctx, "السجلات المشفرة المحفوظة"));
-        List<VaultRepository.VaultItem> items = vault.getItems();
-        if (items.isEmpty()) {
-            itemsCard.addView(DetailUiKit.createBodyText(ctx, "لا توجد سجلات محفوظة بعد."));
-        }
-        for (VaultRepository.VaultItem item : items) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, DetailUiKit.dp(ctx, 6), 0, DetailUiKit.dp(ctx, 6));
-
-            TextView tv = new TextView(ctx);
-            tv.setText("🔑 " + item.label + "\n" + item.usernameOrMeta + "  •  ••••••••");
-            tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
-            row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView copy = new TextView(ctx);
-            copy.setText("نسخ");
-            copy.setTextColor(ContextCompat.getColor(ctx, R.color.kp_primary));
-            copy.setPadding(DetailUiKit.dp(ctx, 8), 0, DetailUiKit.dp(ctx, 8), 0);
-            copy.setOnClickListener(v -> {
-                ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    cm.setPrimaryClip(ClipData.newPlainText(item.label, item.secretValue));
-                    Toast.makeText(ctx, "تم نسخ القيمة الآمنة", Toast.LENGTH_SHORT).show();
-                }
-            });
-            row.addView(copy);
-
-            TextView del = new TextView(ctx);
-            del.setText("حذف");
-            del.setTextColor(ContextCompat.getColor(ctx, R.color.kp_danger));
-            del.setOnClickListener(v -> {
-                vault.deleteItem(item.id);
-                host.refreshScreen();
-            });
-            row.addView(del);
-            itemsCard.addView(row);
-        }
-        root.addView(itemsCard);
+                    }));
+                    for (VaultRepository.VaultItem e : vault.getItems()) {
+                        unlockedBox.addView(DetailUiKit.createChipOption(ctx,
+                                "🔐 " + e.label + " : " + e.secretValue + "   ✕", false, v3 -> {
+                                    vault.deleteItem(e.id);
+                                    host.refreshScreen();
+                                }));
+                    }
+                })));
+        card.addView(unlockedBox);
+        root.addView(card);
     }
 
-    public static void buildAiKeyboard(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
-        LinearLayout cfgCard = DetailUiKit.createCard(ctx);
-        cfgCard.addView(DetailUiKit.createSectionTitle(ctx, "إعداد مفتاح الذكاء الاصطناعي المجاني"));
-        cfgCard.addView(DetailUiKit.createBodyText(ctx,
-                "أدخل مفتاح Gemini API المجاني (من Google AI Studio) أو مفتاح OpenAI الخاص بك. يُحفظ المفتاح مشفراً محلياً على جهازك فقط."));
-
-        String provider = prefs.getAiProvider();
-        cfgCard.addView(DetailUiKit.createChipOption(ctx, "Google Gemini API (مجاني وموصى به)",
-                "gemini".equals(provider), v -> {
-                    prefs.setAiProvider("gemini");
-                    prefs.setAiModel("gemini-2.0-flash");
-                    host.refreshScreen();
-                }));
-        cfgCard.addView(DetailUiKit.createChipOption(ctx, "OpenAI-Compatible API",
-                "openai".equals(provider), v -> {
-                    prefs.setAiProvider("openai");
-                    prefs.setAiModel("gpt-4o-mini");
-                    host.refreshScreen();
-                }));
-
-        EditText etKey = DetailUiKit.createInput(ctx, "الصق مفتاح API الخاص بك هنا...", true);
-        etKey.setText(prefs.getAiApiKey());
-        EditText etModel = DetailUiKit.createInput(ctx, "اسم النموذج (مثلاً: gemini-2.0-flash)", false);
-        etModel.setText(prefs.getAiModel());
-        cfgCard.addView(etKey);
-        cfgCard.addView(etModel);
-        cfgCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ الإعدادات المشفرة", v -> {
-            prefs.setAiApiKey(etKey.getText().toString().trim());
-            prefs.setAiModel(etModel.getText().toString().trim());
-            Toast.makeText(ctx, "تم حفظ مفتاح الذكاء الاصطناعي بأمان ✅", Toast.LENGTH_SHORT).show();
-        }));
-        root.addView(cfgCard);
-
-        LinearLayout testCard = DetailUiKit.createCard(ctx);
-        testCard.addView(DetailUiKit.createSectionTitle(ctx, "تجربة أدوات الذكاء الاصطناعي"));
-        EditText etSample = DetailUiKit.createInput(ctx, "اكتب نصاً لتجربة التدقيق أو إعادة الصياغة أو الترجمة...", false);
-        TextView tvOut = DetailUiKit.createBodyText(ctx, "النتيجة ستظهر هنا...");
-        testCard.addView(etSample);
-
-        AiKeyboardHelper helper = new AiKeyboardHelper(ctx);
-        testCard.addView(DetailUiKit.createChipOption(ctx, "✓ تدقيق إملائي ونحوي", true, v -> {
-            tvOut.setText("جاري التدقيق...");
-            helper.processText(etSample.getText().toString(), AiKeyboardHelper.Action.PROOFREAD, (ok, res) -> tvOut.setText(res));
-        }));
-        testCard.addView(DetailUiKit.createChipOption(ctx, "✨ إعادة صياغة احترافية", true, v -> {
-            tvOut.setText("جاري إعادة الصياغة...");
-            helper.processText(etSample.getText().toString(), AiKeyboardHelper.Action.REWRITE, (ok, res) -> tvOut.setText(res));
-        }));
-        testCard.addView(DetailUiKit.createChipOption(ctx, "🌍 ترجمة فورية", true, v -> {
-            tvOut.setText("جاري الترجمة...");
-            helper.processText(etSample.getText().toString(), AiKeyboardHelper.Action.TRANSLATE, (ok, res) -> tvOut.setText(res));
-        }));
-        testCard.addView(tvOut);
-        root.addView(testCard);
-    }
-
-    public static void buildLocalBackup(Context ctx, LinearLayout root, SecurityHostActions host) {
+    public static void buildLocalBackup(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
         LinearLayout card = DetailUiKit.createCard(ctx);
         card.addView(DetailUiKit.createSectionTitle(ctx, "النسخ الاحتياطي المحلي (JSON)"));
         card.addView(DetailUiKit.createBodyText(ctx,
-                "يشمل النسخ الاحتياطي المحلي: جميع الإعدادات، التخطيطات المخصصة، القاموس الشخصي، الاختصارات النصية، والثيمات المخصصة."));
-        card.addView(DetailUiKit.createPrimaryButton(ctx, "تصدير نسخة احتياطية إلى الجهاز", v -> host.exportLocalBackup()));
-        card.addView(DetailUiKit.createChipOption(ctx, "استيراد نسخة احتياطية من ملف JSON", true, v -> host.importLocalBackup()));
+                "صدّر جميع إعداداتك، اختصاراتك، ثيماتك المخصصة، وتخطيطك في ملف JSON واحد آمن."));
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "⬆️ تصدير نسخة احتياطية (JSON)", v -> host.exportLocalBackup()));
+        card.addView(DetailUiKit.createChipOption(ctx, "⬇️ استيراد نسخة احتياطية من جهازك", true, v -> host.importLocalBackup()));
         root.addView(card);
+
+        LinearLayout resetCard = DetailUiKit.createCard(ctx);
+        resetCard.addView(DetailUiKit.createSectionTitle(ctx, "إعادة الضبط إلى الوضع الافتراضي"));
+        resetCard.addView(DetailUiKit.createBodyText(ctx,
+                "يعيد جميع التفضيلات والأبعاد والحركات والثيم إلى إعدادات المصنع النظيفة."));
+        resetCard.addView(DetailUiKit.createChipOption(ctx, "↺ إعادة ضبط جميع الإعدادات للافتراضي", false, v ->
+                new AlertDialog.Builder(ctx)
+                        .setTitle("إعادة الضبط للافتراضي")
+                        .setMessage("هل أنت متأكد من إعادة جميع إعدادات الكيبورد للوضع الافتراضي؟")
+                        .setPositiveButton("نعم، إعادة ضبط", (d, w) -> {
+                            prefs.resetToDefaults();
+                            Toast.makeText(ctx, "تمت إعادة جميع الإعدادات للافتراضي ✅", Toast.LENGTH_LONG).show();
+                            host.refreshScreen();
+                        })
+                        .setNegativeButton("إلغاء", null)
+                        .show()));
+        root.addView(resetCard);
     }
 
     public static void buildCloudSync(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
-        BackupManager backupManager = new BackupManager(ctx);
         LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "المزامنة السحابية عبر Google Drive"));
+        card.addView(DetailUiKit.createSectionTitle(ctx, "مزامنة Google Drive الاختيارية"));
         card.addView(DetailUiKit.createSwitchRow(ctx, "نسخ احتياطي يومي تلقائي",
-                "مزامنة التخطيطات والقاموس والإعدادات تلقائياً كل 24 ساعة",
-                prefs.isDailyCloudBackupEnabled(), prefs::setDailyCloudBackupEnabled));
-
-        long lastSync = prefs.getLastCloudSyncTime();
-        String syncLabel = lastSync == 0L ? "لم تتم المزامنة بعد"
-                : "آخر مزامنة: " + new SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(new Date(lastSync));
-        TextView tvSyncStatus = DetailUiKit.createBodyText(ctx, syncLabel);
-        card.addView(tvSyncStatus);
-
-        EditText etToken = DetailUiKit.createInput(ctx, "رمز وصول Google Drive OAuth Token", true);
-        etToken.setText(prefs.getDriveAccessToken());
-        card.addView(etToken);
-
-        card.addView(DetailUiKit.createPrimaryButton(ctx, "رفع النسخة إلى Google Drive الآن ☁️", v -> {
-            String token = etToken.getText().toString().trim();
-            prefs.setDriveAccessToken(token);
-            tvSyncStatus.setText("جاري الرفع إلى Google Drive...");
-            backupManager.uploadToGoogleDrive(token, (ok, msg) -> {
-                tvSyncStatus.setText(msg);
-                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
-            });
-        }));
-
-        card.addView(DetailUiKit.createChipOption(ctx, "استعادة النسخة من Google Drive", true, v -> {
-            String token = etToken.getText().toString().trim();
-            prefs.setDriveAccessToken(token);
-            tvSyncStatus.setText("جاري الاستعادة من Google Drive...");
-            backupManager.restoreFromGoogleDrive(token, (ok, msg) -> {
-                tvSyncStatus.setText(msg);
-                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
-            });
+                "يتطلب رمز وصول Google Drive اختياري", prefs.isDailyCloudBackupEnabled(), prefs::setDailyCloudBackupEnabled));
+        EditText etTok = DetailUiKit.createInput(ctx, "Google Drive OAuth Access Token (اختياري)", true);
+        etTok.setText(prefs.getDriveAccessToken());
+        card.addView(etTok);
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ رمز المزامنة المشفّر", v -> {
+            prefs.setDriveAccessToken(etTok.getText().toString().trim());
+            Toast.makeText(ctx, "تم حفظ الرمز بتشفير AES-256 ✅", Toast.LENGTH_SHORT).show();
         }));
         root.addView(card);
     }
 
-    public static void buildProShowcase(Context ctx, LinearLayout root, KeyboardPrefs prefs, SecurityHostActions host) {
-        LinearLayout hero = DetailUiKit.createCard(ctx);
-        hero.setBackgroundResource(R.drawable.bg_card_hero);
-        hero.addView(DetailUiKit.createSectionTitle(ctx, "👑 كيبورد برو — الميزات الذهبية الحصرية"));
-        hero.addView(DetailUiKit.createBodyText(ctx,
-                "• ثيمات الكريستال والزجاج المضيء بحدود متوهجة ولمعان فوري.\n"
-                        + "• خلفية شفافة مموهة (Transparent Blur) تعرض التطبيق خلف الكيبورد.\n"
-                        + "• أنماط إيموجي Fluent 3D و Twitter و Google + استيراد خطوط إيموجي.\n"
-                        + "• حزم ملصقات وأصوات مفاتيح حصرية (كريستال / ميكانيكي).\n"
-                        + "• نسخ احتياطي سحابي يومي عبر Google Drive ومزامنة الأجهزة."));
-        hero.addView(DetailUiKit.createSwitchRow(ctx, "وضع كيبورد برو الذهبي مفعّل",
-                "افتح جميع الثيمات الكريستالية والمحتوى الحصري بالكامل",
-                prefs.isProUnlocked(), checked -> {
-                    prefs.setProUnlocked(checked);
-                    Toast.makeText(ctx, checked ? "تم تفعيل جميع ميزات برو 👑" : "تم تعطيل وضع برو", Toast.LENGTH_SHORT).show();
-                    host.refreshScreen();
-                }));
-        root.addView(hero);
+    public static void buildProShowcase(Context ctx, LinearLayout root) {
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "كيبورد برو — جميع الميزات مفتوحة 100%"));
+        card.addView(DetailUiKit.createBodyText(ctx,
+                "هذا التطبيق مفتوح بالكامل ومجاني 100% — بدون اشتراكات، بدون إعلانات، بدون تتبع.\n\n"
+                        + "• أكثر من 42 ثيماً احترافياً (كريستال زجاجي، ماتيريال، آيفون 27، ميكانيكي، نيون، رسم).\n"
+                        + "• محرر ثيمات كامل مع خلفية صورة واستخراج ألوان وتراجع/إعادة.\n"
+                        + "• 9 حركات ضغط مفاتيح و5 تأثيرات إضاءة وزوايا Squircle وعمق 3D.\n"
+                        + "• 56 نمط زخرفة فورية (26 عربي + 30 إنجليزي) مع حماية تلقائية لكلمات المرور.\n"
+                        + "• شريط أدوات قابل للتخصيص + 26 أداة مدمجة (حاسبة، تراك باد، آيات، أذكار، رسالة سرية).\n"
+                        + "• ذكاء عربي فوري (همزات، فرانكو، حاسبة، هجري/ميلادي) + Gemini BYOK بـ 15 أداة."));
+        root.addView(card);
+    }
+
+    private static String actionLabel(String code, String[] codes, String[] names) {
+        for (int i = 0; i < codes.length; i++) {
+            if (codes[i].equals(code)) return names[i];
+        }
+        return "بدون إجراء";
     }
 }

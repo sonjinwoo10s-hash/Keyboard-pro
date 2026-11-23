@@ -2,147 +2,121 @@ package com.keyboardpro.ime;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.Context;
+import android.content.ComponentCallbacks2;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.inputmethodservice.InputMethodService;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.speech.tts.TextToSpeech;
+import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
-import android.widget.GridLayout;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
+import android.widget.PopupWindow;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.example.R;
 import com.keyboardpro.data.ClipboardRepository;
 import com.keyboardpro.data.KeyboardPrefs;
-import com.keyboardpro.data.StickerRepository;
-import com.keyboardpro.data.VaultRepository;
 import com.keyboardpro.ui.MainActivity;
-import com.keyboardpro.ui.SettingsDetailActivity;
 
 import java.io.File;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Core InputMethodService for Keyboard Pro (كيبورد برو).
- * Engineered for strict low-RAM (~30-60MB) footprint:
- * - Disables landscape fullscreen ExtractView (onEvaluateFullscreenMode() always returns false).
- * - Lazy-loads Emoji, Stickers, Clipboard, Vault, AI helper, and custom Emoji fonts ONLY on demand.
- * - Immediately releases panel views, cached shaders, and custom emoji Typeface inside
- *   onFinishInputView() and onTrimMemory().
- * - Smart Blur: hardware-accelerated Window.setBackgroundBlurRadius() on API 31+,
- *   lightweight translucent alpha overlay on API 26-30 (disabled by default).
+ * Ultra-lightweight Keyboard Pro InputMethodService (~30-60MB RAM):
+ * - Strictly unified full-width in landscape by default + onEvaluateFullscreenMode() = false
+ * - Auto-disables text decoration in password, email, and URL fields + Bank Apps exclusion list
+ * - Smart Arabic intelligence (Hamza/Ta, Franco-Arabic, Inline Math, Hijri/Gregorian Dates, Azkar)
+ * - Customizable pinned Top Toolbar + 26-tool "All Tools" drawer (long-press to pin/unpin)
+ * - Per-action Sound & Vibration matrix (10 actions) + 2-finger gestures
+ * - API 31+ hardware blur + API 26-30 alpha overlay fallback
+ * - Lazy panel inflation & immediate cache cleanup in onFinishInputView() and onTrimMemory()
  */
-public class KeyboardProService extends InputMethodService implements ProKeyboardView.OnKeyboardActionListener {
-
-    private static final String[] EMOJI_LIST = {
-            "😀", "😂", "🥰", "😍", "🤩", "😎", "🥳", "🤔", "😴", "😭",
-            "🔥", "✨", "💎", "👑", "❤️", "💙", "💚", "💛", "💜", "🤍",
-            "👍", "👏", "🙏", "🤝", "💪", "🎉", "🎊", "🌹", "🌙", "⭐",
-            "☕", "🚀", "⚡", "🎯", "🏆", "📱", "💻", "🎵", "📸", "✅"
-    };
+public class KeyboardProService extends InputMethodService
+        implements ProKeyboardView.OnKeyboardActionListener, ImePanelsController.Host {
 
     private KeyboardPrefs prefs;
-    private TextStyleEngine styleEngine;
+    private ClipboardRepository clipRepo;
     private SmartWordEngine wordEngine;
-    private ClipboardManager systemClipboard;
+    private TextStyleEngine styleEngine;
+    private ImePanelsController panelsController;
 
-    // Strictly lazy-loaded helpers (null until explicitly accessed by user)
-    private ClipboardRepository clipboardRepo;
-    private VaultRepository vaultRepo;
-    private StickerRepository stickerRepo;
-    private AiKeyboardHelper aiHelper;
-    private Typeface lazyCustomEmojiTypeface;
-
-    private View rootView;
-    private ProKeyboardView keyboardView;
-    private LinearLayout toolbar;
-    private TextView btnDecorate;
-    private HorizontalScrollView styleStripScroll;
-    private LinearLayout styleStripContainer;
-    private LinearLayout aiBar;
+    private LinearLayout rootLayout;
+    private LinearLayout toolbarRow;
+    private LinearLayout quickActionsRow;
     private HorizontalScrollView suggestionsScroll;
     private LinearLayout suggestionsContainer;
-    private ScrollView inlinePanelScroll;
-    private LinearLayout inlinePanelContent;
+    private FrameLayout bodyContainer;
+    private ProKeyboardView keyboardView;
+    private View activePanelView;
+    private LinearLayout iphoneBottomBar;
+    private View bottomSpacerView;
+    private PopupWindow popupWindow;
+
+    private KeyboardTheme activeTheme;
+    private boolean isArabic = true;
+    private boolean isSymbols = false;
+    private boolean isSymbolsPage2 = false;
+    private boolean isShifted = false;
+    private boolean isLandscape = false;
+    private boolean sensitiveFieldActive = false;
+    private boolean bankAppExcluded = false;
+    private boolean selectModeActive = false;
 
     private final StringBuilder currentWord = new StringBuilder();
     private String previousWord = "";
-    private String activeInlinePanel = "";
-    private boolean styleStripVisible = false;
+    private String cachedFontPath = "";
+    private Typeface cachedCustomTypeface = null;
 
-    private final ClipboardManager.OnPrimaryClipChangedListener clipListener = () -> {
-        if (systemClipboard == null) return;
-        ClipData data = systemClipboard.getPrimaryClip();
-        if (data != null && data.getItemCount() > 0) {
-            CharSequence text = data.getItemAt(0).coerceToText(this);
-            if (text != null && text.length() > 0) {
-                getClipboardRepo().addClip(text.toString());
-            }
-        }
-    };
+    private ClipboardManager clipboardManager;
+    private ClipboardManager.OnPrimaryClipChangedListener clipListener;
+    private Vibrator vibrator;
+    private AudioManager audioManager;
+    private TextToSpeech tts;
 
     @Override
     public void onCreate() {
         super.onCreate();
         prefs = new KeyboardPrefs(this);
-        styleEngine = new TextStyleEngine();
+        clipRepo = new ClipboardRepository(this);
         wordEngine = new SmartWordEngine(this);
+        styleEngine = new TextStyleEngine();
+        panelsController = new ImePanelsController(this, prefs, clipRepo, this);
+        vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
 
-        systemClipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (systemClipboard != null) {
-            systemClipboard.addPrimaryClipChangedListener(clipListener);
+        clipboardManager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboardManager != null) {
+            clipListener = () -> {
+                if (prefs.isIncognitoMode() || sensitiveFieldActive || bankAppExcluded) return;
+                ClipData cd = clipboardManager.getPrimaryClip();
+                if (cd != null && cd.getItemCount() > 0 && cd.getItemAt(0).getText() != null) {
+                    clipRepo.addClip(cd.getItemAt(0).getText().toString());
+                }
+            };
+            clipboardManager.addPrimaryClipChangedListener(clipListener);
         }
     }
 
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        if (systemClipboard != null) {
-            systemClipboard.removePrimaryClipChangedListener(clipListener);
-        }
-        releaseHeavyResources();
-    }
-
-    private ClipboardRepository getClipboardRepo() {
-        if (clipboardRepo == null) clipboardRepo = new ClipboardRepository(this);
-        return clipboardRepo;
-    }
-
-    private VaultRepository getVaultRepo() {
-        if (vaultRepo == null) vaultRepo = new VaultRepository(this);
-        return vaultRepo;
-    }
-
-    private StickerRepository getStickerRepo() {
-        if (stickerRepo == null) stickerRepo = new StickerRepository(this);
-        return stickerRepo;
-    }
-
-    private AiKeyboardHelper getAiHelper() {
-        if (aiHelper == null) aiHelper = new AiKeyboardHelper(this);
-        return aiHelper;
-    }
-
-    /**
-     * CRITICAL REQUIREMENT: Always disable landscape fullscreen ExtractView
-     * so the underlying app stays visible behind the keyboard in landscape mode.
-     */
+    /** CRITICAL: Never cover the underlying app with Fullscreen ExtractView in Landscape! */
     @Override
     public boolean onEvaluateFullscreenMode() {
         return false;
@@ -150,680 +124,435 @@ public class KeyboardProService extends InputMethodService implements ProKeyboar
 
     @Override
     public View onCreateInputView() {
-        rootView = getLayoutInflater().inflate(R.layout.ime_keyboard_container, null);
-        keyboardView = rootView.findViewById(R.id.ime_keyboard_view);
-        toolbar = rootView.findViewById(R.id.ime_toolbar);
-        btnDecorate = rootView.findViewById(R.id.btn_ime_decorate);
-        styleStripScroll = rootView.findViewById(R.id.ime_style_strip_scroll);
-        styleStripContainer = rootView.findViewById(R.id.ime_style_strip_container);
-        aiBar = rootView.findViewById(R.id.ime_ai_bar);
-        suggestionsScroll = rootView.findViewById(R.id.ime_suggestions_scroll);
-        suggestionsContainer = rootView.findViewById(R.id.ime_suggestions_container);
-        inlinePanelScroll = rootView.findViewById(R.id.ime_inline_panel_scroll);
-        inlinePanelContent = rootView.findViewById(R.id.ime_inline_panel_content);
+        isLandscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        isArabic = "ar".equals(prefs.getKeyboardLanguage());
+        activeTheme = ThemeRegistry.getThemeById(this, prefs.getActiveThemeId());
 
-        keyboardView.setListener(this);
-        setupToolbarButtons();
-        applyThemeToContainer();
-        refreshSuggestions();
+        rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        rootLayout.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        return rootView;
+        // 1. Top Toolbar (Customizable Pinned Tools + More ...)
+        toolbarRow = new LinearLayout(this);
+        toolbarRow.setOrientation(LinearLayout.HORIZONTAL);
+        toolbarRow.setGravity(Gravity.CENTER_VERTICAL);
+        toolbarRow.setPadding(dp(6), dp(4), dp(6), dp(4));
+        rootLayout.addView(toolbarRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
+
+        // 2. Suggestions Bar
+        suggestionsScroll = new HorizontalScrollView(this);
+        suggestionsScroll.setHorizontalScrollBarEnabled(false);
+        suggestionsContainer = new LinearLayout(this);
+        suggestionsContainer.setOrientation(LinearLayout.HORIZONTAL);
+        suggestionsContainer.setGravity(Gravity.CENTER_VERTICAL);
+        suggestionsContainer.setPadding(dp(6), dp(2), dp(6), dp(2));
+        suggestionsScroll.addView(suggestionsContainer);
+        rootLayout.addView(suggestionsScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
+
+        // 3. Optional Quick Actions Row (Undo, Copy, Paste, Select All, Clear)
+        quickActionsRow = new LinearLayout(this);
+        quickActionsRow.setOrientation(LinearLayout.HORIZONTAL);
+        quickActionsRow.setGravity(Gravity.CENTER);
+        quickActionsRow.setPadding(dp(6), dp(2), dp(6), dp(2));
+        rootLayout.addView(quickActionsRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
+
+        // 4. Main Body (Keyboard Canvas OR Lazy-loaded Panel)
+        bodyContainer = new FrameLayout(this);
+        keyboardView = new ProKeyboardView(this);
+        keyboardView.setOnKeyboardActionListener(this);
+        bodyContainer.addView(keyboardView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootLayout.addView(bodyContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, resolveKeyboardHeightPx()));
+
+        // 5. Optional iPhone Bottom Bar (Globe + Mic + Hide)
+        iphoneBottomBar = new LinearLayout(this);
+        iphoneBottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        iphoneBottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        iphoneBottomBar.setPadding(dp(14), dp(2), dp(14), dp(4));
+        rootLayout.addView(iphoneBottomBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
+
+        // 6. Optional Bottom Margin Spacer
+        bottomSpacerView = new View(this);
+        rootLayout.addView(bottomSpacerView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(prefs.getBottomMarginDp())));
+
+        applyThemeAndLayout();
+        return rootLayout;
     }
 
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
-        if (keyboardView != null) {
-            String lang = prefs.getKeyboardLanguage();
-            keyboardView.setMode("en".equals(lang)
-                    ? KeyboardLayoutData.KeyboardMode.ENGLISH
-                    : KeyboardLayoutData.KeyboardMode.ARABIC);
-            keyboardView.reloadConfig();
-            applyThemeToContainer();
-            applySmartWindowBlur();
-            updateDecorateButtonUi();
-            closeInlinePanels();
-            currentWord.setLength(0);
-            refreshSuggestions();
-        }
+        isLandscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        currentWord.setLength(0);
+        detectSensitiveOrExcludedContext(info);
+        closePanel();
+        applyThemeAndLayout();
+        applyHardwareBlurIfNeeded();
+        refreshSuggestions();
     }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
         super.onFinishInputView(finishingInput);
-        // Immediately release panel views, emoji font typeface, and transient caches when keyboard hides
-        releaseHeavyResources();
+        dismissPopup();
+        closePanel();
+        if (keyboardView != null) keyboardView.releaseCaches();
+        currentWord.setLength(0);
     }
 
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_UI_HIDDEN || level >= TRIM_MEMORY_BACKGROUND) {
-            releaseHeavyResources();
-        }
-    }
-
-    private void releaseHeavyResources() {
-        closeInlinePanels();
-        if (styleStripContainer != null) {
-            styleStripContainer.removeAllViews();
-        }
-        if (suggestionsContainer != null) {
-            suggestionsContainer.removeAllViews();
-        }
-        styleStripVisible = false;
-        if (styleStripScroll != null) {
-            styleStripScroll.setVisibility(View.GONE);
-        }
-        if (keyboardView != null) {
-            keyboardView.releaseCaches();
-        }
-        lazyCustomEmojiTypeface = null;
-        stickerRepo = null;
-        aiHelper = null;
-        currentWord.setLength(0);
-    }
-
-    /**
-     * Smart Blur Optimization:
-     * - Disabled by default.
-     * - Android 12+ (API 31+): hardware-accelerated Window.setBackgroundBlurRadius()
-     * - Android 8-11 (API 26-30): lightweight translucent alpha overlay only (zero software blur).
-     */
-    private void applySmartWindowBlur() {
-        if (getWindow() == null || getWindow().getWindow() == null) return;
-        Window imeWindow = getWindow().getWindow();
-        boolean blurOn = prefs.isTransparentBlurEnabled();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (blurOn) {
-                int radiusPx = Math.max(12, Math.min(80, prefs.getBlurStrength()));
-                imeWindow.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
-                imeWindow.setBackgroundBlurRadius(radiusPx);
-            } else {
-                imeWindow.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
-                imeWindow.setBackgroundBlurRadius(0);
-            }
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            closePanel();
+            if (keyboardView != null) keyboardView.releaseCaches();
+            cachedCustomTypeface = null;
+            cachedFontPath = "";
         }
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-        if (keyboardView != null) {
-            keyboardView.reloadConfig();
+    public void onDestroy() {
+        if (clipboardManager != null && clipListener != null) {
+            clipboardManager.removePrimaryClipChangedListener(clipListener);
+        }
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+            tts = null;
+        }
+        super.onDestroy();
+    }
+
+    private void detectSensitiveOrExcludedContext(EditorInfo info) {
+        sensitiveFieldActive = false;
+        bankAppExcluded = false;
+        if (info == null) return;
+
+        int cls = info.inputType & InputType.TYPE_MASK_CLASS;
+        int var = info.inputType & InputType.TYPE_MASK_VARIATION;
+        if (cls == InputType.TYPE_CLASS_TEXT) {
+            if (var == InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    || var == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                    || var == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+                    || var == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                    || var == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+                    || var == InputType.TYPE_TEXT_VARIATION_URI) {
+                sensitiveFieldActive = true;
+            }
+        } else if (cls == InputType.TYPE_CLASS_NUMBER && var == InputType.TYPE_NUMBER_VARIATION_PASSWORD) {
+            sensitiveFieldActive = true;
+        }
+
+        String pkg = info.packageName;
+        if (pkg != null && !pkg.isEmpty()) {
+            for (String ex : prefs.getBankExclusionApps().split(",")) {
+                if (!ex.trim().isEmpty() && pkg.equalsIgnoreCase(ex.trim())) {
+                    bankAppExcluded = true;
+                    break;
+                }
+            }
         }
     }
 
-    private void setupToolbarButtons() {
-        btnDecorate.setOnClickListener(v -> {
-            if (!styleStripVisible) {
-                styleStripVisible = true;
-                styleStripScroll.setVisibility(View.VISIBLE);
-                if (!prefs.isDecorationEnabled()) {
-                    prefs.setDecorationEnabled(true);
-                    if (TextStyleEngine.STYLE_NORMAL.equals(prefs.getActiveStyleId())) {
-                        prefs.setActiveStyleId(TextStyleEngine.STYLE_AR_KASHIDA);
-                    }
-                }
-                populateStyleStrip();
-            } else {
-                prefs.setDecorationEnabled(!prefs.isDecorationEnabled());
-                styleStripVisible = false;
-                styleStripScroll.setVisibility(View.GONE);
-                styleStripContainer.removeAllViews();
+    private void applyHardwareBlurIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && getWindow() != null && getWindow().getWindow() != null) {
+            Window w = getWindow().getWindow();
+            boolean wantBlur = prefs.isTransparentBlurEnabled()
+                    || (activeTheme != null && activeTheme.backgroundType == KeyboardTheme.BackgroundType.TRANSPARENT_BLUR);
+            try {
+                w.setBackgroundBlurRadius(wantBlur ? Math.max(12, prefs.getBlurStrength() / 2) : 0);
+            } catch (Exception ignored) {
             }
-            updateDecorateButtonUi();
-        });
-
-        rootView.findViewById(R.id.btn_ime_ai).setOnClickListener(v -> {
-            boolean show = aiBar.getVisibility() != View.VISIBLE;
-            aiBar.setVisibility(show ? View.VISIBLE : View.GONE);
-        });
-
-        rootView.findViewById(R.id.btn_ai_proofread).setOnClickListener(v -> runAiAction(AiKeyboardHelper.Action.PROOFREAD));
-        rootView.findViewById(R.id.btn_ai_rewrite).setOnClickListener(v -> runAiAction(AiKeyboardHelper.Action.REWRITE));
-        rootView.findViewById(R.id.btn_ai_translate).setOnClickListener(v -> runAiAction(AiKeyboardHelper.Action.TRANSLATE));
-
-        rootView.findViewById(R.id.btn_ime_clipboard).setOnClickListener(v -> toggleInlinePanel("clipboard"));
-        rootView.findViewById(R.id.btn_ime_vault).setOnClickListener(v -> toggleInlinePanel("vault"));
-        rootView.findViewById(R.id.btn_ime_emoji).setOnClickListener(v -> toggleInlinePanel("emoji"));
-
-        rootView.findViewById(R.id.btn_ime_settings).setOnClickListener(v -> {
-            Intent intent = new Intent(this, MainActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        });
+        }
     }
 
-    private void applyThemeToContainer() {
-        if (rootView == null) return;
-        KeyboardTheme theme = ThemeRegistry.getThemeById(this, prefs.getActiveThemeId());
-        int alpha = prefs.isTransparentBlurEnabled() ? 195 : 255;
-        int tbColor = Color.argb(alpha,
-                Color.red(theme.toolbarBgColor),
-                Color.green(theme.toolbarBgColor),
-                Color.blue(theme.toolbarBgColor));
-        toolbar.setBackgroundColor(tbColor);
-        toolbar.setVisibility(prefs.isShowToolbar() ? View.VISIBLE : View.GONE);
-        suggestionsScroll.setVisibility(prefs.isSuggestionsEnabled() ? View.VISIBLE : View.GONE);
-        rootView.setBackgroundColor(prefs.isTransparentBlurEnabled() ? Color.TRANSPARENT : theme.bgStartColor);
-        updateDecorateButtonUi();
+    private void applyThemeAndLayout() {
+        if (rootLayout == null || keyboardView == null) return;
+        activeTheme = ThemeRegistry.getThemeById(this, prefs.getActiveThemeId());
+        isArabic = "ar".equals(prefs.getKeyboardLanguage());
+
+        rootLayout.setBackgroundColor(activeTheme.toolbarBgColor);
+        toolbarRow.setVisibility(prefs.isShowToolbar() ? View.VISIBLE : View.GONE);
+        suggestionsScroll.setVisibility(prefs.isSuggestionsEnabled() && !sensitiveFieldActive ? View.VISIBLE : View.GONE);
+        quickActionsRow.setVisibility(prefs.isQuickActionsRowEnabled() ? View.VISIBLE : View.GONE);
+        iphoneBottomBar.setVisibility(prefs.isIphoneBottomBar() ? View.VISIBLE : View.GONE);
+
+        ViewGroup.LayoutParams bodyLp = bodyContainer.getLayoutParams();
+        bodyLp.height = resolveKeyboardHeightPx();
+        bodyContainer.setLayoutParams(bodyLp);
+
+        ViewGroup.LayoutParams spLp = bottomSpacerView.getLayoutParams();
+        spLp.height = dp(prefs.getBottomMarginDp());
+        bottomSpacerView.setLayoutParams(spLp);
+
+        buildToolbarButtons();
+        if (prefs.isQuickActionsRowEnabled()) buildQuickActionsBar();
+        if (prefs.isIphoneBottomBar()) buildIphoneBottomBar();
+
+        loadCustomTypefaceLazily();
+        keyboardView.setTheme(activeTheme);
+        keyboardView.setCustomTypeface(cachedCustomTypeface);
+        keyboardView.setLandscape(isLandscape);
+        rebuildRows();
     }
 
-    private void updateDecorateButtonUi() {
-        if (btnDecorate == null) return;
-        boolean on = prefs.isDecorationEnabled() && !TextStyleEngine.STYLE_NORMAL.equals(prefs.getActiveStyleId());
-        if (on) {
-            TextStyleEngine.StyleOption opt = TextStyleEngine.findStyle(prefs.getActiveStyleId());
-            btnDecorate.setText("✨ " + opt.shortLabel);
-            btnDecorate.setBackgroundResource(R.drawable.bg_chip_selected);
-            btnDecorate.setTextColor(getColor(R.color.kp_primary));
+    private void rebuildRows() {
+        List<List<KeyboardLayoutData.KeyItem>> rows;
+        if (isSymbols) {
+            rows = KeyboardLayoutData.buildSymbolRows(isSymbolsPage2, isArabic);
+        } else if (isArabic) {
+            rows = KeyboardLayoutData.buildArabicRows(
+                    prefs.isNumbersRowEnabled(),
+                    prefs.isEmojiRowEnabled(),
+                    prefs.getArabicLayoutType(),
+                    prefs.getCustomArabicLayoutJson());
         } else {
-            btnDecorate.setText("✨ زخرفة");
-            btnDecorate.setBackgroundResource(R.drawable.bg_chip_unselected);
-            btnDecorate.setTextColor(getColor(R.color.kp_text_primary));
+            rows = KeyboardLayoutData.buildEnglishRows(
+                    prefs.isNumbersRowEnabled(),
+                    prefs.isEmojiRowEnabled(),
+                    isShifted,
+                    prefs.getEnglishLayoutType());
         }
+        keyboardView.setRows(rows);
     }
 
-    private void populateStyleStrip() {
-        styleStripContainer.removeAllViews();
-        String activeId = prefs.getActiveStyleId();
-        boolean enabled = prefs.isDecorationEnabled();
+    private void buildToolbarButtons() {
+        toolbarRow.removeAllViews();
+        toolbarRow.setBackgroundColor(activeTheme.toolbarBgColor);
 
-        for (TextStyleEngine.StyleOption style : TextStyleEngine.getAllStyles()) {
-            TextView chip = new TextView(this);
-            chip.setText(style.shortLabel);
-            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            chip.setGravity(Gravity.CENTER);
-            int padH = dp(10);
-            chip.setPadding(padH, dp(4), padH, dp(4));
-
-            boolean isSelected = (enabled && style.id.equals(activeId))
-                    || (!enabled && TextStyleEngine.STYLE_NORMAL.equals(style.id));
-
-            chip.setBackgroundResource(isSelected ? R.drawable.bg_chip_selected : R.drawable.bg_chip_unselected);
-            chip.setTextColor(isSelected ? getColor(R.color.kp_primary) : getColor(R.color.kp_text_primary));
-
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(28));
-            lp.setMargins(dp(3), 0, dp(3), 0);
-            chip.setLayoutParams(lp);
-
-            chip.setOnClickListener(v -> {
-                if (TextStyleEngine.STYLE_NORMAL.equals(style.id)) {
-                    prefs.setDecorationEnabled(false);
-                    prefs.setActiveStyleId(TextStyleEngine.STYLE_NORMAL);
-                } else {
-                    prefs.setDecorationEnabled(true);
-                    prefs.setActiveStyleId(style.id);
-                }
-                updateDecorateButtonUi();
-                populateStyleStrip();
-            });
-
-            styleStripContainer.addView(chip);
+        List<String> pinned = prefs.getPinnedToolbarTools();
+        for (String id : pinned) {
+            addToolbarIcon(iconForTool(id), id,
+                    "decorate".equals(id) && prefs.isDecorationEnabled() && !sensitiveFieldActive);
         }
+        // Always include Settings (if not pinned) and More (...) button
+        if (!pinned.contains("settings")) {
+            addToolbarIcon("⚙️", "settings", false);
+        }
+        addToolbarIcon("⋯", "all_tools", activePanelView != null);
     }
 
-    private void toggleInlinePanel(String panelName) {
-        if (panelName.equals(activeInlinePanel)) {
-            closeInlinePanels();
-            return;
+    private void addToolbarIcon(String glyph, String toolId, boolean highlighted) {
+        TextView tv = new TextView(this);
+        tv.setText(glyph);
+        tv.setTextSize(16);
+        tv.setGravity(Gravity.CENTER);
+        tv.setTextColor(highlighted ? activeTheme.accentColor : activeTheme.keyTextColor);
+        if (highlighted) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.argb(55, Color.red(activeTheme.accentColor),
+                    Color.green(activeTheme.accentColor), Color.blue(activeTheme.accentColor)));
+            bg.setCornerRadius(dp(8));
+            tv.setBackground(bg);
         }
-        activeInlinePanel = panelName;
-        inlinePanelContent.removeAllViews();
-        inlinePanelScroll.setVisibility(View.VISIBLE);
-        keyboardView.setVisibility(View.GONE);
-
-        if ("emoji".equals(panelName)) {
-            buildEmojiAndStickersPanel();
-        } else if ("clipboard".equals(panelName)) {
-            buildClipboardPanel();
-        } else if ("vault".equals(panelName)) {
-            buildVaultPanel();
-        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        lp.setMargins(dp(2), dp(2), dp(2), dp(2));
+        tv.setLayoutParams(lp);
+        tv.setOnClickListener(v -> {
+            triggerActionFeedback("toolbar");
+            openToolById(toolId);
+        });
+        toolbarRow.addView(tv);
     }
 
-    private void closeInlinePanels() {
-        activeInlinePanel = "";
-        if (inlinePanelContent != null) {
-            inlinePanelContent.removeAllViews();
-        }
-        if (inlinePanelScroll != null) inlinePanelScroll.setVisibility(View.GONE);
-        if (keyboardView != null) keyboardView.setVisibility(View.VISIBLE);
-        lazyCustomEmojiTypeface = null;
-    }
-
-    private Typeface getLazyCustomEmojiTypeface() {
-        if (!KeyboardPrefs.EMOJI_STYLE_CUSTOM.equals(prefs.getEmojiStyle())) {
-            return null;
-        }
-        if (lazyCustomEmojiTypeface == null) {
-            String path = prefs.getCustomEmojiFontPath();
-            if (path != null && !path.isEmpty()) {
-                File f = new File(path);
-                if (f.exists()) {
-                    try {
-                        lazyCustomEmojiTypeface = Typeface.createFromFile(f);
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-        }
-        return lazyCustomEmojiTypeface;
-    }
-
-    private void buildEmojiAndStickersPanel() {
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView title = new TextView(this);
-        title.setText("الإيموجي (" + prefs.getEmojiStyle() + ") وملصقاتي");
-        title.setTextColor(getColor(R.color.kp_primary));
-        title.setTextSize(13);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView closeBtn = new TextView(this);
-        closeBtn.setText("أبج ✕");
-        closeBtn.setTextColor(Color.WHITE);
-        closeBtn.setPadding(dp(12), dp(6), dp(12), dp(6));
-        closeBtn.setBackgroundResource(R.drawable.bg_chip_selected);
-        closeBtn.setOnClickListener(v -> closeInlinePanels());
-        header.addView(closeBtn);
-        inlinePanelContent.addView(header);
-
-        Typeface customEmojiTf = getLazyCustomEmojiTypeface();
-
-        GridLayout grid = new GridLayout(this);
-        grid.setColumnCount(8);
-        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        gridLp.topMargin = dp(8);
-        grid.setLayoutParams(gridLp);
-
-        for (String emoji : EMOJI_LIST) {
+    private void buildQuickActionsBar() {
+        quickActionsRow.removeAllViews();
+        String[][] qa = {{"تحديد الكل", "select_all"}, {"نسخ", "copy"}, {"قص", "cut"}, {"لصق", "paste"}};
+        for (String[] item : qa) {
             TextView tv = new TextView(this);
-            tv.setText(emoji);
-            tv.setTextSize(22);
-            if (customEmojiTf != null) tv.setTypeface(customEmojiTf);
+            tv.setText(item[0]);
+            tv.setTextSize(11);
+            tv.setTextColor(activeTheme.keyTextColor);
             tv.setGravity(Gravity.CENTER);
-            tv.setPadding(dp(4), dp(6), dp(4), dp(6));
-            tv.setOnClickListener(v -> {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) ic.commitText(emoji, 1);
-                onKeyFeedback();
-            });
-            GridLayout.LayoutParams cellLp = new GridLayout.LayoutParams();
-            cellLp.width = 0;
-            cellLp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            tv.setLayoutParams(cellLp);
-            grid.addView(tv);
-        }
-        inlinePanelContent.addView(grid);
-
-        TextView stkHeader = new TextView(this);
-        stkHeader.setText("ملصقاتي السريعة:");
-        stkHeader.setTextColor(getColor(R.color.kp_text_secondary));
-        stkHeader.setTextSize(12);
-        stkHeader.setPadding(0, dp(10), 0, dp(6));
-        inlinePanelContent.addView(stkHeader);
-
-        LinearLayout stkRow = new LinearLayout(this);
-        stkRow.setOrientation(LinearLayout.HORIZONTAL);
-        for (StickerRepository.StickerItem s : getStickerRepo().getStickers()) {
-            TextView pill = new TextView(this);
-            pill.setText(s.label);
-            pill.setTextColor(Color.WHITE);
-            pill.setTextSize(12);
-            pill.setPadding(dp(10), dp(6), dp(10), dp(6));
-            pill.setBackgroundResource(R.drawable.bg_chip_unselected);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(dp(4), 0, dp(4), 0);
-            pill.setLayoutParams(lp);
-            pill.setOnClickListener(v -> {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) ic.commitText(s.label + " ", 1);
-                onKeyFeedback();
-            });
-            stkRow.addView(pill);
-        }
-        HorizontalScrollView hsv = new HorizontalScrollView(this);
-        hsv.addView(stkRow);
-        inlinePanelContent.addView(hsv);
-    }
-
-    private void buildClipboardPanel() {
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("سجل الحافظة (اضغط للصق)");
-        title.setTextColor(getColor(R.color.kp_primary));
-        title.setTextSize(13);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView closeBtn = new TextView(this);
-        closeBtn.setText("إغلاق ✕");
-        closeBtn.setTextColor(Color.WHITE);
-        closeBtn.setPadding(dp(10), dp(5), dp(10), dp(5));
-        closeBtn.setBackgroundResource(R.drawable.bg_chip_selected);
-        closeBtn.setOnClickListener(v -> closeInlinePanels());
-        header.addView(closeBtn);
-        inlinePanelContent.addView(header);
-
-        // On-demand indexed SQLite LIMIT 15 query
-        List<ClipboardRepository.ClipItem> clips = getClipboardRepo().getClips(15);
-        if (clips.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText(R.string.ime_clipboard_empty);
-            empty.setTextColor(getColor(R.color.kp_text_secondary));
-            empty.setPadding(0, dp(24), 0, dp(16));
-            empty.setGravity(Gravity.CENTER);
-            inlinePanelContent.addView(empty);
-            return;
-        }
-
-        for (ClipboardRepository.ClipItem clip : clips) {
-            TextView row = new TextView(this);
-            row.setText((clip.pinned ? "📌 " : "") + clip.text);
-            row.setTextColor(Color.WHITE);
-            row.setMaxLines(2);
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            row.setBackgroundResource(R.drawable.bg_chip_unselected);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = dp(6);
-            row.setLayoutParams(lp);
-            row.setOnClickListener(v -> {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) {
-                    String textToCommit = prefs.isDecorationEnabled()
-                            ? styleEngine.transformText(clip.text, prefs.getActiveStyleId())
-                            : clip.text;
-                    ic.commitText(textToCommit, 1);
-                }
-                closeInlinePanels();
-            });
-            inlinePanelContent.addView(row);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            tv.setLayoutParams(lp);
+            tv.setOnClickListener(v -> performEditAction(item[1]));
+            quickActionsRow.addView(tv);
         }
     }
 
-    private void buildVaultPanel() {
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("🔐 Keyboard Pass — الكتابة التلقائية الآمنة");
-        title.setTextColor(getColor(R.color.kp_gold));
-        title.setTextSize(13);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+    private void buildIphoneBottomBar() {
+        iphoneBottomBar.removeAllViews();
+        TextView globe = new TextView(this);
+        globe.setText("🌐");
+        globe.setTextSize(17);
+        globe.setPadding(dp(8), 0, dp(8), 0);
+        globe.setOnClickListener(v -> toggleLanguage());
+        iphoneBottomBar.addView(globe);
 
-        TextView closeBtn = new TextView(this);
-        closeBtn.setText("إغلاق ✕");
-        closeBtn.setTextColor(Color.WHITE);
-        closeBtn.setPadding(dp(10), dp(5), dp(10), dp(5));
-        closeBtn.setBackgroundResource(R.drawable.bg_chip_selected);
-        closeBtn.setOnClickListener(v -> closeInlinePanels());
-        header.addView(closeBtn);
-        inlinePanelContent.addView(header);
+        View spacer = new View(this);
+        iphoneBottomBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
-        VaultRepository vault = getVaultRepo();
-        if (!vault.isSessionUnlocked()) {
-            TextView locked = new TextView(this);
-            locked.setText(R.string.ime_vault_locked);
-            locked.setTextColor(getColor(R.color.kp_text_secondary));
-            locked.setPadding(dp(8), dp(16), dp(8), dp(12));
-            inlinePanelContent.addView(locked);
+        TextView hide = new TextView(this);
+        hide.setText("⌨️⬇️");
+        hide.setTextSize(15);
+        hide.setPadding(dp(8), 0, dp(8), 0);
+        hide.setOnClickListener(v -> requestHideSelf(0));
+        iphoneBottomBar.addView(hide);
+    }
 
-            TextView unlockBtn = new TextView(this);
-            unlockBtn.setText("فتح بالبصمة الآن 🔓");
-            unlockBtn.setTextColor(getColor(R.color.kp_gold));
-            unlockBtn.setGravity(Gravity.CENTER);
-            unlockBtn.setPadding(dp(16), dp(12), dp(16), dp(12));
-            unlockBtn.setBackgroundResource(R.drawable.bg_crown_button);
-            unlockBtn.setOnClickListener(v -> {
-                Intent i = new Intent(this, SettingsDetailActivity.class);
-                i.putExtra(SettingsDetailActivity.EXTRA_SECTION, SettingsDetailActivity.SEC_KEYBOARD_PASS);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(i);
-            });
-            inlinePanelContent.addView(unlockBtn);
-            return;
-        }
-
-        List<VaultRepository.VaultItem> items = vault.getItems();
-        if (items.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("الخزنة فارغة — أضف حساباتك أو رقم الآيبان من Keyboard Pass.");
-            empty.setTextColor(getColor(R.color.kp_text_secondary));
-            empty.setPadding(0, dp(16), 0, dp(8));
-            inlinePanelContent.addView(empty);
-            return;
-        }
-
-        for (VaultRepository.VaultItem item : items) {
-            TextView btn = new TextView(this);
-            btn.setText("🔑 " + item.label + "  (" + item.usernameOrMeta + ")");
-            btn.setTextColor(Color.WHITE);
-            btn.setPadding(dp(12), dp(10), dp(12), dp(10));
-            btn.setBackgroundResource(R.drawable.bg_chip_unselected);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = dp(6);
-            btn.setLayoutParams(lp);
-            btn.setOnClickListener(v -> {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) ic.commitText(item.secretValue, 1);
-                closeInlinePanels();
-            });
-            inlinePanelContent.addView(btn);
+    private String iconForTool(String id) {
+        switch (id) {
+            case "ai": return "✨";
+            case "clipboard": return "📋";
+            case "emoji": return "😊";
+            case "translate": return "🌐";
+            case "resize": return "↕️";
+            case "settings": return "⚙️";
+            case "decorate": return "✦";
+            case "text_edit": return "✏️";
+            case "trackpad": return "🖱️";
+            case "date_time": return "📅";
+            case "calculator": return "🧮";
+            case "quran": return "📖";
+            case "azkar": return "📿";
+            case "secret": return "🔐";
+            case "stickers": return "🎨";
+            case "one_handed": return "🤏";
+            case "incognito": return "🕵️";
+            default: return "⚡";
         }
     }
 
-    private void runAiAction(AiKeyboardHelper.Action action) {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) return;
-        CharSequence selected = ic.getSelectedText(0);
-        boolean hadSelection = selected != null && selected.length() > 0;
-        CharSequence before = hadSelection ? selected : ic.getTextBeforeCursor(300, 0);
-        String text = before == null ? "" : before.toString().trim();
-
-        if (text.isEmpty()) {
-            Toast.makeText(this, "اكتب أو حدد نصاً أولاً", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        Toast.makeText(this, "جاري المعالجة بالذكاء الاصطناعي...", Toast.LENGTH_SHORT).show();
-        getAiHelper().processText(text, action, (success, output) -> {
-            if (!success) {
-                Toast.makeText(this, output, Toast.LENGTH_LONG).show();
-                return;
-            }
-            InputConnection currentIc = getCurrentInputConnection();
-            if (currentIc == null) return;
-            if (hadSelection) {
-                currentIc.commitText(output, 1);
-            } else {
-                currentIc.deleteSurroundingText(before.length(), 0);
-                currentIc.commitText(output, 1);
-            }
-            currentWord.setLength(0);
-        });
-    }
+    // ---- ProKeyboardView.OnKeyboardActionListener ----
 
     @Override
-    public void onKeyOutput(String text, int code) {
+    public void onText(String text) {
         InputConnection ic = getCurrentInputConnection();
-        if (ic == null) return;
+        if (ic == null || text == null) return;
 
-        if (code == KeyboardLayoutData.CODE_SPACE) {
-            handleWordBoundary(ic, " ");
-            return;
-        }
-
-        boolean decorateOn = prefs.isDecorationEnabled();
-        String styleId = prefs.getActiveStyleId();
-
-        String transformed = styleEngine.transformTypedChar(text, styleId, decorateOn);
-        ic.commitText(transformed, 1);
-
-        if (Character.isLetterOrDigit(text.charAt(0))) {
-            currentWord.append(text);
-        } else {
-            currentWord.setLength(0);
-        }
-        refreshSuggestions();
-    }
-
-    private void handleWordBoundary(InputConnection ic, String trailing) {
-        String rawWord = currentWord.toString();
-        if (!rawWord.isEmpty()) {
-            String expanded = wordEngine.expandShortcutExact(rawWord);
-            if (expanded != null) {
-                ic.deleteSurroundingText(rawWord.length(), 0);
-                String out = prefs.isDecorationEnabled()
-                        ? styleEngine.transformText(expanded, prefs.getActiveStyleId())
-                        : expanded;
-                ic.commitText(out + trailing, 1);
-                previousWord = expanded;
+        // Inline Math trigger on '='
+        if ("=".equals(text) && prefs.isInlineMathEnabled() && currentWord.length() >= 3) {
+            String mathRes = SmartWordEngine.tryEvaluateMath(currentWord.toString());
+            if (mathRes != null) {
+                ic.deleteSurroundingText(currentWord.length(), 0);
+                ic.commitText(mathRes, 1);
                 currentWord.setLength(0);
                 refreshSuggestions();
                 return;
             }
-
-            String styleId = prefs.getActiveStyleId();
-            if (prefs.isDecorationEnabled() && TextStyleEngine.isFramedStyle(styleId)) {
-                CharSequence recent = ic.getTextBeforeCursor(rawWord.length() * 2 + 4, 0);
-                if (recent != null && recent.length() > 0) {
-                    String s = recent.toString();
-                    int lastSpace = s.lastIndexOf(' ');
-                    String typedSegment = lastSpace >= 0 ? s.substring(lastSpace + 1) : s;
-                    if (!typedSegment.isEmpty()) {
-                        ic.deleteSurroundingText(typedSegment.length(), 0);
-                        ic.commitText(styleEngine.wrapFramedWord(typedSegment, styleId) + trailing, 1);
-                        previousWord = rawWord;
-                        currentWord.setLength(0);
-                        refreshSuggestions();
-                        return;
-                    }
-                }
-            }
-
-            previousWord = rawWord;
-            currentWord.setLength(0);
         }
-        ic.commitText(trailing, 1);
+
+        // Smart Punctuation spacing
+        if (prefs.isSmartPunctuationEnabled() && (".".equals(text) || "،".equals(text) || ",".equals(text) || "؟".equals(text) || "!".equals(text))) {
+            finalizeWordBeforeDelimiter(ic);
+            ic.commitText(text + " ", 1);
+            refreshSuggestions();
+            return;
+        }
+
+        boolean canDecorate = prefs.isDecorationEnabled()
+                && !sensitiveFieldActive
+                && !bankAppExcluded
+                && !TextStyleEngine.STYLE_NORMAL.equals(prefs.getActiveStyleId());
+
+        String out = canDecorate
+                ? styleEngine.transformTypedChar(text, prefs.getActiveStyleId(), true)
+                : text;
+
+        ic.commitText(out, 1);
+        if (!text.trim().isEmpty()) {
+            currentWord.append(text);
+        }
+        if (isShifted && !isArabic) {
+            isShifted = false;
+            rebuildRows();
+        }
         refreshSuggestions();
     }
 
     @Override
-    public void onSpecialKey(int code) {
+    public void onKeyCode(int code) {
         InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+
         switch (code) {
-            case KeyboardLayoutData.CODE_DELETE:
-                if (ic != null) {
-                    CharSequence sel = ic.getSelectedText(0);
-                    if (sel != null && sel.length() > 0) {
-                        ic.commitText("", 1);
-                    } else {
-                        CharSequence before2 = ic.getTextBeforeCursor(2, 0);
-                        if (before2 != null && before2.length() == 2
-                                && Character.isSurrogatePair(before2.charAt(0), before2.charAt(1))) {
-                            ic.deleteSurroundingText(2, 0);
-                        } else {
-                            ic.deleteSurroundingText(1, 0);
-                        }
-                    }
+            case KeyboardLayoutData.CODE_BACKSPACE:
+                CharSequence sel = ic.getSelectedText(0);
+                if (sel != null && sel.length() > 0) {
+                    ic.commitText("", 1);
+                } else {
+                    ic.deleteSurroundingText(1, 0);
                 }
-                if (currentWord.length() > 0) {
-                    currentWord.deleteCharAt(currentWord.length() - 1);
-                }
+                if (currentWord.length() > 0) currentWord.deleteCharAt(currentWord.length() - 1);
+                refreshSuggestions();
+                break;
+
+            case KeyboardLayoutData.CODE_SPACE:
+                finalizeWordBeforeDelimiter(ic);
+                ic.commitText(" ", 1);
                 refreshSuggestions();
                 break;
 
             case KeyboardLayoutData.CODE_ENTER:
-                if (ic != null) {
-                    EditorInfo ei = getCurrentInputEditorInfo();
-                    int action = ei != null ? (ei.imeOptions & EditorInfo.IME_MASK_ACTION) : EditorInfo.IME_ACTION_NONE;
-                    if (action == EditorInfo.IME_ACTION_SEARCH
-                            || action == EditorInfo.IME_ACTION_SEND
-                            || action == EditorInfo.IME_ACTION_GO
-                            || action == EditorInfo.IME_ACTION_DONE) {
-                        ic.performEditorAction(action);
-                    } else {
-                        ic.commitText("\n", 1);
-                    }
+                finalizeWordBeforeDelimiter(ic);
+                EditorInfo ei = getCurrentInputEditorInfo();
+                int action = ei != null ? (ei.imeOptions & EditorInfo.IME_MASK_ACTION) : EditorInfo.IME_ACTION_NONE;
+                if (action == EditorInfo.IME_ACTION_SEARCH || action == EditorInfo.IME_ACTION_SEND
+                        || action == EditorInfo.IME_ACTION_GO || action == EditorInfo.IME_ACTION_DONE) {
+                    ic.performEditorAction(action);
+                } else {
+                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
                 }
-                currentWord.setLength(0);
                 refreshSuggestions();
                 break;
 
             case KeyboardLayoutData.CODE_SHIFT:
-                keyboardView.toggleShift();
-                break;
-
-            case KeyboardLayoutData.CODE_SWITCH_LANG:
-                if (keyboardView.getMode() == KeyboardLayoutData.KeyboardMode.ARABIC) {
-                    keyboardView.setMode(KeyboardLayoutData.KeyboardMode.ENGLISH);
-                    prefs.setKeyboardLanguage("en");
-                } else {
-                    keyboardView.setMode(KeyboardLayoutData.KeyboardMode.ARABIC);
-                    prefs.setKeyboardLanguage("ar");
-                }
-                currentWord.setLength(0);
-                refreshSuggestions();
+                isShifted = !isShifted;
+                rebuildRows();
                 break;
 
             case KeyboardLayoutData.CODE_MODE_SYMBOLS:
-                if (keyboardView.getMode() == KeyboardLayoutData.KeyboardMode.SYMBOLS_1
-                        || keyboardView.getMode() == KeyboardLayoutData.KeyboardMode.SYMBOLS_2) {
-                    keyboardView.setMode("en".equals(prefs.getKeyboardLanguage())
-                            ? KeyboardLayoutData.KeyboardMode.ENGLISH
-                            : KeyboardLayoutData.KeyboardMode.ARABIC);
-                } else {
-                    keyboardView.setMode(KeyboardLayoutData.KeyboardMode.SYMBOLS_1);
-                }
+                isSymbols = true;
+                isSymbolsPage2 = false;
+                rebuildRows();
                 break;
 
-            case KeyboardLayoutData.CODE_MODE_SYMBOLS_MORE:
-                keyboardView.setMode(KeyboardLayoutData.KeyboardMode.SYMBOLS_2);
+            case KeyboardLayoutData.CODE_MODE_ALPHA:
+                isSymbols = false;
+                rebuildRows();
+                break;
+
+            case KeyboardLayoutData.CODE_SYMBOLS_PAGE2:
+                isSymbolsPage2 = !isSymbolsPage2;
+                rebuildRows();
+                break;
+
+            case KeyboardLayoutData.CODE_LANG_SWITCH:
+                toggleLanguage();
                 break;
 
             case KeyboardLayoutData.CODE_EMOJI:
-                toggleInlinePanel("emoji");
+                openToolById("emoji");
                 break;
         }
     }
 
     @Override
-    public void onSwipeWord(String rawPathChars) {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) return;
-        boolean isArabic = keyboardView.getMode() == KeyboardLayoutData.KeyboardMode.ARABIC;
-        String matched = wordEngine.matchSwipeSequence(rawPathChars, isArabic);
-        if (matched != null) {
-            String out = prefs.isDecorationEnabled()
-                    ? styleEngine.transformText(matched, prefs.getActiveStyleId())
-                    : matched;
-            ic.commitText(out + " ", 1);
-            previousWord = matched;
-            currentWord.setLength(0);
-            refreshSuggestions();
+    public void onLongPressKey(KeyboardLayoutData.KeyItem key, RectF keyBounds) {
+        if (key.code == KeyboardLayoutData.CODE_ENTER && prefs.isEnterLongPressEmoji()) {
+            openToolById("emoji");
+            return;
         }
+        if (key.popupChars == null || key.popupChars.length == 0) return;
+
+        // Letter-first option puts base character first
+        showPopupChars(key.popupChars, keyBounds);
     }
 
     @Override
-    public void onCursorMove(int steps) {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) return;
-        int keyCode = steps > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
-        int count = Math.min(5, Math.abs(steps));
-        for (int i = 0; i < count; i++) {
-            ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, keyCode));
-            ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, keyCode));
-        }
+    public void onCursorMove(int deltaSteps) {
+        moveCursor(deltaSteps);
     }
 
     @Override
@@ -832,72 +561,309 @@ public class KeyboardProService extends InputMethodService implements ProKeyboar
         if (ic == null) return;
         CharSequence before = ic.getTextBeforeCursor(40, 0);
         if (before == null || before.length() == 0) return;
-        String s = before.toString();
-        int idx = s.length() - 1;
-        while (idx > 0 && s.charAt(idx) == ' ') idx--;
-        while (idx > 0 && s.charAt(idx - 1) != ' ') idx--;
-        ic.deleteSurroundingText(s.length() - idx, 0);
+        int len = before.length();
+        int i = len - 1;
+        while (i > 0 && Character.isWhitespace(before.charAt(i))) i--;
+        while (i > 0 && !Character.isWhitespace(before.charAt(i - 1))) i--;
+        ic.deleteSurroundingText(len - i, 0);
         currentWord.setLength(0);
         refreshSuggestions();
     }
 
     @Override
-    public void onKeyFeedback() {
-        if (prefs.isVibrationEnabled()) {
-            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-            if (vibrator != null && vibrator.hasVibrator()) {
-                int ms = prefs.getVibrationStrengthMs();
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
-                } else {
-                    vibrator.vibrate(ms);
-                }
-            }
-        }
-        if (prefs.isKeySoundEnabled() && !KeyboardPrefs.SOUND_PACK_SILENT.equals(prefs.getSoundPack())) {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                int fx = AudioManager.FX_KEYPRESS_STANDARD;
-                if (KeyboardPrefs.SOUND_PACK_MECHANICAL.equals(prefs.getSoundPack())) {
-                    fx = AudioManager.FX_KEYPRESS_SPACEBAR;
-                } else if (KeyboardPrefs.SOUND_PACK_CRYSTAL.equals(prefs.getSoundPack())) {
-                    fx = AudioManager.FX_KEY_CLICK;
-                }
-                am.playSoundEffect(fx, 0.5f);
+    public void onSwipeTypingResult(List<String> touchedLabels) {
+        String word = wordEngine.resolveSwipePath(touchedLabels, isArabic);
+        if (word != null) {
+            InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                ic.commitText(word + " ", 1);
+                previousWord = word;
+                currentWord.setLength(0);
+                refreshSuggestions();
             }
         }
     }
 
-    private void refreshSuggestions() {
-        if (suggestionsContainer == null) return;
-        suggestionsContainer.removeAllViews();
-        boolean isArabic = keyboardView == null
-                || keyboardView.getMode() == KeyboardLayoutData.KeyboardMode.ARABIC;
-        List<String> list = wordEngine.getSuggestions(currentWord.toString(), previousWord, isArabic);
+    @Override
+    public void onTwoFingerSwipe(String direction) {
+        String action = prefs.getTwoFingerSwipeAction(direction);
+        if ("hide".equals(action)) {
+            requestHideSelf(0);
+        } else if (!"none".equals(action)) {
+            performEditAction(action);
+        }
+    }
 
-        for (String suggestion : list) {
+    @Override
+    public void onSpacebarLanguageSwipe() {
+        toggleLanguage();
+    }
+
+    @Override
+    public void onKeyTouched(String matrixAction) {
+        triggerActionFeedback(matrixAction);
+    }
+
+    // ---- ImePanelsController.Host ----
+
+    @Override
+    public void commitRaw(String text) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic != null && text != null) {
+            ic.commitText(text, 1);
+        }
+    }
+
+    @Override
+    public void sendKeyEventCode(int androidKeyCode) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic != null) {
+            ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, androidKeyCode));
+            ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, androidKeyCode));
+        }
+    }
+
+    @Override
+    public void moveCursor(int steps) {
+        if (steps == 0) return;
+        int key = steps > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
+        int count = Math.min(Math.abs(steps), 8);
+        for (int i = 0; i < count; i++) sendKeyEventCode(key);
+    }
+
+    @Override
+    public void performEditAction(String action) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        switch (action) {
+            case "select_all": ic.performContextMenuAction(android.R.id.selectAll); break;
+            case "copy": ic.performContextMenuAction(android.R.id.copy); break;
+            case "cut": ic.performContextMenuAction(android.R.id.cut); break;
+            case "paste": ic.performContextMenuAction(android.R.id.paste); break;
+            case "left": sendKeyEventCode(KeyEvent.KEYCODE_DPAD_LEFT); break;
+            case "right": sendKeyEventCode(KeyEvent.KEYCODE_DPAD_RIGHT); break;
+            case "up": sendKeyEventCode(KeyEvent.KEYCODE_DPAD_UP); break;
+            case "down": sendKeyEventCode(KeyEvent.KEYCODE_DPAD_DOWN); break;
+            case "select":
+                selectModeActive = !selectModeActive;
+                showToast(selectModeActive ? "وضع التحديد مفعّل" : "تم إيقاف التحديد");
+                break;
+        }
+    }
+
+    @Override
+    public void openToolById(String toolId) {
+        if (toolId == null) return;
+        switch (toolId) {
+            case "all_tools": showPanel(panelsController.buildAllToolsPanel()); break;
+            case "emoji": showPanel(panelsController.buildEmojiPanel()); break;
+            case "clipboard": showPanel(panelsController.buildClipboardPanel()); break;
+            case "decorate": showPanel(panelsController.buildDecorationPanel()); break;
+            case "ai": showPanel(panelsController.buildAiPanel()); break;
+            case "translate":
+                AiKeyboardHelper.AiAction tr = new AiKeyboardHelper.AiAction("tr", "ترجمة",
+                        "Translate the following text into " + prefs.getTranslationTargetLang() + " and return only the translation:");
+                runAiAction(tr);
+                break;
+            case "text_edit": showPanel(panelsController.buildTextEditPanel()); break;
+            case "trackpad": showPanel(panelsController.buildTrackpadPanel()); break;
+            case "calculator": showPanel(panelsController.buildCalculatorPanel()); break;
+            case "date_time": showPanel(panelsController.buildDateTimePanel()); break;
+            case "quran": showPanel(panelsController.buildQuranOrAzkarPanel(true)); break;
+            case "azkar": showPanel(panelsController.buildQuranOrAzkarPanel(false)); break;
+            case "resize": showPanel(panelsController.buildResizePanel()); break;
+            case "stickers": showPanel(panelsController.buildStickersPanel()); break;
+            case "secret":
+                toggleSecretMessageOnField();
+                break;
+            case "one_handed":
+                prefs.setOneHandedModeEnabled(!prefs.isOneHandedModeEnabled());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "split":
+                prefs.setSplitModeEnabled(!prefs.isSplitModeEnabled());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "floating":
+                prefs.setFloatingModeEnabled(!prefs.isFloatingModeEnabled());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "incognito":
+                prefs.setIncognitoMode(!prefs.isIncognitoMode());
+                showToast(prefs.isIncognitoMode() ? "تم تفعيل الوضع المتخفي" : "تم إيقاف الوضع المتخفي");
+                closePanel();
+                break;
+            case "mute":
+                boolean nextSound = !prefs.isKeySoundEnabled();
+                prefs.setKeySoundEnabled(nextSound);
+                showToast(nextSound ? "تم تشغيل صوت المفاتيح" : "تم كتم الصوت");
+                closePanel();
+                break;
+            case "emoji_row":
+                prefs.setEmojiRowEnabled(!prefs.isEmojiRowEnabled());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "iphone_bar":
+                prefs.setIphoneBottomBar(!prefs.isIphoneBottomBar());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "quick_actions":
+                prefs.setQuickActionsRowEnabled(!prefs.isQuickActionsRowEnabled());
+                closePanel();
+                applyThemeAndLayout();
+                break;
+            case "quick_paste":
+                List<ClipboardRepository.ClipItem> top = clipRepo.getClips(1, true, false);
+                if (!top.isEmpty()) commitRaw(top.get(0).text);
+                closePanel();
+                break;
+            case "voice":
+                InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showInputMethodPicker();
+                break;
+            case "tts":
+                speakCurrentFieldText();
+                break;
+            case "hide_kb":
+                requestHideSelf(0);
+                break;
+            case "settings": {
+                Intent i = new Intent(this, MainActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+                break;
+            }
+        }
+    }
+
+    @Override
+    public void refreshToolbarAndKeyboard() {
+        applyThemeAndLayout();
+    }
+
+    @Override
+    public void closePanel() {
+        if (activePanelView != null && bodyContainer != null) {
+            bodyContainer.removeView(activePanelView);
+            activePanelView = null;
+        }
+        if (keyboardView != null) keyboardView.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    public void runAiAction(AiKeyboardHelper.AiAction action) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        CharSequence selected = ic.getSelectedText(0);
+        final boolean hasSelection = selected != null && selected.length() > 0;
+        CharSequence source = hasSelection ? selected : ic.getTextBeforeCursor(500, 0);
+        String text = source == null ? "" : source.toString().trim();
+        if (text.isEmpty()) {
+            showToast("اكتب نصاً أولاً لتطبيق «" + action.label + "»");
+            return;
+        }
+        showToast("جاري المعالجة عبر Gemini...");
+        AiKeyboardHelper.runAction(prefs, action, text, new AiKeyboardHelper.AiCallback() {
+            @Override
+            public void onResult(String resultText) {
+                InputConnection curIc = getCurrentInputConnection();
+                if (curIc == null) return;
+                if (hasSelection) {
+                    curIc.commitText(resultText, 1);
+                } else {
+                    curIc.deleteSurroundingText(text.length(), 0);
+                    curIc.commitText(resultText, 1);
+                }
+                closePanel();
+            }
+
+            @Override
+            public void onError(String errorMessage) {
+                showToast(errorMessage);
+            }
+        });
+    }
+
+    @Override
+    public void showToast(String msg) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    public KeyboardTheme getActiveKeyboardTheme() {
+        return activeTheme != null ? activeTheme : ThemeRegistry.getBuiltInThemes().get(0);
+    }
+
+    @Override
+    public boolean isLandscape() {
+        return isLandscape;
+    }
+
+    // ---- Internal Helpers ----
+
+    private void showPanel(View panel) {
+        closePanel();
+        activePanelView = panel;
+        if (keyboardView != null) keyboardView.setVisibility(View.GONE);
+        if (bodyContainer != null) {
+            bodyContainer.addView(panel, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+    }
+
+    private void finalizeWordBeforeDelimiter(InputConnection ic) {
+        if (currentWord.length() == 0) return;
+        String raw = currentWord.toString();
+
+        // Framed decorative word wrapping
+        if (prefs.isDecorationEnabled() && !sensitiveFieldActive && !bankAppExcluded
+                && TextStyleEngine.isFramedStyle(prefs.getActiveStyleId())) {
+            String wrapped = styleEngine.wrapFramedWord(raw, prefs.getActiveStyleId());
+            ic.deleteSurroundingText(raw.length(), 0);
+            ic.commitText(wrapped, 1);
+        } else if (!sensitiveFieldActive && !bankAppExcluded) {
+            String correction = wordEngine.getAutoCommitCorrection(raw, prefs);
+            if (correction != null && !correction.equals(raw)) {
+                ic.deleteSurroundingText(raw.length(), 0);
+                ic.commitText(correction, 1);
+                triggerActionFeedback("autocorrect");
+                raw = correction;
+            }
+            wordEngine.learnWord(raw, prefs.isIncognitoMode());
+        }
+        previousWord = raw;
+        currentWord.setLength(0);
+    }
+
+    private void refreshSuggestions() {
+        if (suggestionsContainer == null || !prefs.isSuggestionsEnabled() || sensitiveFieldActive) return;
+        suggestionsContainer.removeAllViews();
+        List<String> list = wordEngine.getSuggestions(currentWord.toString(), previousWord, isArabic, prefs);
+        for (String sug : list) {
             TextView tv = new TextView(this);
-            tv.setText(suggestion);
-            tv.setTextColor(getColor(R.color.kp_text_primary));
+            tv.setText(sug);
+            tv.setTextColor(activeTheme.keyTextColor);
             tv.setTextSize(13);
-            tv.setPadding(dp(12), dp(4), dp(12), dp(4));
-            tv.setBackgroundResource(R.drawable.bg_chip_unselected);
+            tv.setPadding(dp(12), dp(5), dp(12), dp(5));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(activeTheme.keyBgColor);
+            bg.setCornerRadius(dp(14));
+            tv.setBackground(bg);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(26));
-            lp.setMargins(dp(4), 0, dp(4), 0);
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMarginEnd(dp(6));
             tv.setLayoutParams(lp);
-            tv.setGravity(Gravity.CENTER);
             tv.setOnClickListener(v -> {
                 InputConnection ic = getCurrentInputConnection();
                 if (ic != null) {
-                    if (currentWord.length() > 0) {
-                        ic.deleteSurroundingText(currentWord.length(), 0);
-                    }
-                    String out = prefs.isDecorationEnabled()
-                            ? styleEngine.transformText(suggestion, prefs.getActiveStyleId())
-                            : suggestion;
-                    ic.commitText(out + " ", 1);
-                    previousWord = suggestion;
+                    if (currentWord.length() > 0) ic.deleteSurroundingText(currentWord.length(), 0);
+                    ic.commitText(sug + " ", 1);
+                    previousWord = sug;
                     currentWord.setLength(0);
                     refreshSuggestions();
                 }
@@ -906,8 +872,143 @@ public class KeyboardProService extends InputMethodService implements ProKeyboar
         }
     }
 
+    private void showPopupChars(String[] chars, RectF keyBounds) {
+        dismissPopup();
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(6), dp(6), dp(6), dp(6));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(activeTheme.toolbarBgColor);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), activeTheme.accentColor);
+        row.setBackground(bg);
+
+        for (String ch : chars) {
+            TextView tv = new TextView(this);
+            tv.setText(ch);
+            tv.setTextColor(activeTheme.keyTextColor);
+            tv.setTextSize(16);
+            tv.setPadding(dp(10), dp(6), dp(10), dp(6));
+            tv.setOnClickListener(v -> {
+                if ("التاريخ".equals(ch)) commitRaw(SmartWordEngine.getGregorianDate());
+                else if ("الهجري".equals(ch)) commitRaw(SmartWordEngine.getHijriDate());
+                else if ("الوقت".equals(ch)) commitRaw(SmartWordEngine.getCurrentTime());
+                else onText(ch);
+                dismissPopup();
+            });
+            row.addView(tv);
+        }
+
+        popupWindow = new PopupWindow(row, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, false);
+        popupWindow.setOutsideTouchable(true);
+        if (keyboardView != null) {
+            int x = (int) Math.max(dp(8), keyBounds.left - dp(24));
+            int y = (int) Math.max(0, keyBounds.top - dp(48));
+            popupWindow.showAtLocation(keyboardView, Gravity.TOP | Gravity.START, x, y);
+        }
+    }
+
+    private void dismissPopup() {
+        if (popupWindow != null && popupWindow.isShowing()) {
+            popupWindow.dismiss();
+        }
+        popupWindow = null;
+    }
+
+    private void toggleLanguage() {
+        isArabic = !isArabic;
+        isSymbols = false;
+        prefs.setKeyboardLanguage(isArabic ? "ar" : "en");
+        currentWord.setLength(0);
+        rebuildRows();
+        refreshSuggestions();
+    }
+
+    private void toggleSecretMessageOnField() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        CharSequence before = ic.getTextBeforeCursor(250, 0);
+        if (before == null || before.length() == 0) {
+            showToast("اكتب رسالة أولاً لتشفيرها أو فك تشفيرها");
+            return;
+        }
+        String src = before.toString();
+        String toggled = SmartWordEngine.toggleSecretCipher(src);
+        ic.deleteSurroundingText(src.length(), 0);
+        ic.commitText(toggled, 1);
+        closePanel();
+    }
+
+    private void speakCurrentFieldText() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        CharSequence text = ic.getSelectedText(0);
+        if (text == null || text.length() == 0) text = ic.getTextBeforeCursor(300, 0);
+        final String toSpeak = text == null ? "" : text.toString().trim();
+        if (toSpeak.isEmpty()) {
+            showToast("لا يوجد نص لقراءته");
+            return;
+        }
+        if (tts == null) {
+            tts = new TextToSpeech(this, status -> {
+                if (status == TextToSpeech.SUCCESS && tts != null) {
+                    tts.setLanguage(isArabic ? new Locale("ar") : Locale.US);
+                    tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "kb_tts");
+                }
+            });
+        } else {
+            tts.setLanguage(isArabic ? new Locale("ar") : Locale.US);
+            tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "kb_tts");
+        }
+        closePanel();
+    }
+
+    private void triggerActionFeedback(String matrixAction) {
+        if (prefs.isVibrationEnabled() && prefs.isActionVibeEnabled(matrixAction) && vibrator != null) {
+            int ms = prefs.getVibrationStrengthMs();
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+                } else {
+                    vibrator.vibrate(ms);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        if (prefs.isKeySoundEnabled() && prefs.isActionSoundEnabled(matrixAction)
+                && !KeyboardPrefs.SOUND_PACK_SILENT.equals(prefs.getSoundPack()) && audioManager != null) {
+            float vol = prefs.getSoundVolumePct() / 100f;
+            int fx = "delete".equals(matrixAction) || "delete_repeat".equals(matrixAction)
+                    ? AudioManager.FX_KEYPRESS_DELETE
+                    : ("space".equals(matrixAction) ? AudioManager.FX_KEYPRESS_SPACEBAR
+                    : ("enter".equals(matrixAction) ? AudioManager.FX_KEYPRESS_RETURN
+                    : AudioManager.FX_KEYPRESS_STANDARD));
+            audioManager.playSoundEffect(fx, vol);
+        }
+    }
+
+    private void loadCustomTypefaceLazily() {
+        String path = prefs.getCustomUiFontPath();
+        if (path.equals(cachedFontPath)) return;
+        cachedFontPath = path;
+        if (path.isEmpty()) {
+            cachedCustomTypeface = null;
+            return;
+        }
+        try {
+            File f = new File(path);
+            cachedCustomTypeface = f.exists() ? Typeface.createFromFile(f) : null;
+        } catch (Exception e) {
+            cachedCustomTypeface = null;
+        }
+    }
+
+    private int resolveKeyboardHeightPx() {
+        int heightDp = isLandscape ? prefs.getLandscapeHeightDp() : prefs.getPortraitHeightDp();
+        return dp(heightDp);
+    }
+
     private int dp(int v) {
-        return Math.round(TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()));
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 }

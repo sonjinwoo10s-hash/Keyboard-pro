@@ -1,6 +1,5 @@
 package com.keyboardpro.ime;
 
-import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -9,154 +8,171 @@ import com.keyboardpro.data.KeyboardPrefs;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-
 /**
- * AI Keyboard Engine supporting user-provided free API keys (Gemini API or OpenAI-compatible)
- * for instant proofreading, rewriting, and translation directly from the keyboard or AI bench.
+ * BYOK (Bring Your Own Key) Google Gemini AI Keyboard helper using lightweight
+ * HttpURLConnection (zero heavy SDK overhead), supporting 15 customizable prompt actions,
+ * user-defined custom AI tools, "About Me" persona injection, and local usage counters.
  */
-public class AiKeyboardHelper {
-
-    public enum Action {
-        PROOFREAD,
-        REWRITE,
-        TRANSLATE
-    }
+public final class AiKeyboardHelper {
 
     public interface AiCallback {
-        void onResult(boolean success, String output);
+        void onResult(String resultText);
+        void onError(String errorMessage);
     }
 
-    private final KeyboardPrefs prefs;
-    private final SmartWordEngine offlineEngine;
-    private final OkHttpClient client = new OkHttpClient();
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    public static class AiAction {
+        public final String id;
+        public final String label;
+        public final String prompt;
 
-    public AiKeyboardHelper(Context context) {
-        this.prefs = new KeyboardPrefs(context);
-        this.offlineEngine = new SmartWordEngine(context);
-    }
-
-    public void processText(String inputText, Action action, AiCallback callback) {
-        if (inputText == null || inputText.trim().isEmpty()) {
-            mainHandler.post(() -> callback.onResult(false, "اكتب نصاً أولاً لاستخدام الذكاء الاصطناعي."));
-            return;
+        public AiAction(String id, String label, String prompt) {
+            this.id = id;
+            this.label = label;
+            this.prompt = prompt;
         }
+    }
 
-        // Offline translation fast-path when offline dictionary has exact phrase and no API key
-        String apiKey = prefs.getAiApiKey();
-        if (action == Action.TRANSLATE && prefs.isOfflineTranslationEnabled() && apiKey.isEmpty()) {
-            String offline = offlineEngine.translateOffline(inputText);
-            if (offline != null) {
-                mainHandler.post(() -> callback.onResult(true, offline));
-                return;
+    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+
+    private static final List<AiAction> BUILT_IN_ACTIONS = new ArrayList<>();
+
+    static {
+        BUILT_IN_ACTIONS.add(new AiAction("fix", "✨ تصحيح إملائي", "صحح الأخطاء الإملائية والنحوية فقط وأرجع النص المصحح دون شرح:"));
+        BUILT_IN_ACTIONS.add(new AiAction("rephrase", "🔄 إعادة صياغة", "أعد صياغة النص التالي بأسلوب سلس واحترافي دون تغيير المعنى، وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("formal", "👔 أسلوب رسمي", "حول النص التالي إلى أسلوب رسمي ومهني راقٍ وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("friendly", "😊 أسلوب ودي", "حول النص التالي إلى أسلوب ودي ولطيف ودافئ وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("shorten", "✂️ اختصار", "اختصر النص التالي في جملة أو جملتين واضحتين دون فقدان المعنى:"));
+        BUILT_IN_ACTIONS.add(new AiAction("expand", "📝 توسيع", "وسّع النص التالي وأضف تفاصيل مفيدة بأسلوب جميل وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("translate_en", "🌐 ترجمة للإنجليزية", "Translate the following text into natural fluent English. Return only the translation:"));
+        BUILT_IN_ACTIONS.add(new AiAction("translate_ar", "🌐 ترجمة للعربية", "ترجم النص التالي إلى عربية فصحى طبيعية وسلسة، وأرجع الترجمة فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("diacritize", "✍️ تشكيل كامل", "أضف التشكيل العربي الصحيح والكامل للنص التالي وأرجع النص المشكّل فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("fusha", "📖 تحويل للفصحى", "حول النص التالي إلى لغة عربية فصحى سليمة وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("dialect", "💬 لهجة عامية", "حول النص التالي إلى لهجة عربية بيضاء طبيعية ومحببة وأرجع النص فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("emoji", "😍 إضافة إيموجي", "أضف رموزاً تعبيرية (إيموجي) مناسبة بذكاء داخل النص التالي وأرجعه فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("caption", "📸 كابشن سوشيال", "اكتب كابشن قصير وجذاب للنشر على السوشيال ميديا بناءً على النص التالي:"));
+        BUILT_IN_ACTIONS.add(new AiAction("reply", "⚡ رد ذكي", "اكتب رداً ذكياً ومهذباً ومناسباً على الرسالة التالية وأرجع الرد فقط:"));
+        BUILT_IN_ACTIONS.add(new AiAction("summarize", "📋 تلخيص", "لخص النص التالي في نقاط قصيرة جداً وواضحة:"));
+    }
+
+    private AiKeyboardHelper() {
+    }
+
+    public static List<AiAction> getAllActions(KeyboardPrefs prefs) {
+        List<AiAction> all = new ArrayList<>(BUILT_IN_ACTIONS);
+        try {
+            JSONArray arr = new JSONArray(prefs.getCustomAiToolsJson());
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                all.add(new AiAction(
+                        o.optString("id", "custom_" + i),
+                        o.optString("label", "أداة مخصصة"),
+                        o.optString("prompt", "")
+                ));
             }
+        } catch (Exception ignored) {
         }
+        return all;
+    }
 
-        if (apiKey.isEmpty()) {
-            mainHandler.post(() -> callback.onResult(false,
-                    "الرجاء إضافة مفتاح API مجاني في الإعدادات ← كيبورد الذكاء الاصطناعي."));
+    public static void addCustomAction(KeyboardPrefs prefs, String label, String prompt) {
+        try {
+            JSONArray arr = new JSONArray(prefs.getCustomAiToolsJson());
+            JSONObject o = new JSONObject();
+            o.put("id", "custom_" + System.currentTimeMillis());
+            o.put("label", label.trim());
+            o.put("prompt", prompt.trim());
+            arr.put(o);
+            prefs.setCustomAiToolsJson(arr.toString());
+        } catch (Exception ignored) {
+        }
+    }
+
+    public static void runAction(KeyboardPrefs prefs, AiAction action, String inputText, AiCallback callback) {
+        String apiKey = prefs.getAiApiKey();
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            MAIN.post(() -> callback.onError("يرجى إدخال مفتاح Gemini API من الإعدادات ← كيبورد الذكاء الاصطناعي"));
+            return;
+        }
+        if (inputText == null || inputText.trim().isEmpty()) {
+            MAIN.post(() -> callback.onError("اكتب نصاً أولاً لاستخدام أدوات الذكاء الاصطناعي"));
             return;
         }
 
-        String prompt = buildPrompt(inputText.trim(), action);
-        String provider = prefs.getAiProvider();
-        String model = prefs.getAiModel();
+        final String model = prefs.getAiModel().isEmpty() ? "gemini-flash-latest" : prefs.getAiModel();
+        final String persona = prefs.getAiAboutMePersona();
 
-        executor.execute(() -> {
+        EXECUTOR.execute(() -> {
+            HttpURLConnection conn = null;
             try {
-                if ("openai".equals(provider)) {
-                    callOpenAiCompatible(apiKey, model, prompt, callback);
+                StringBuilder promptBuilder = new StringBuilder();
+                if (persona != null && !persona.isEmpty()) {
+                    promptBuilder.append("معلومات عن الكاتب (للسياق فقط): ").append(persona).append("\n\n");
+                }
+                promptBuilder.append(action.prompt).append("\n\n").append(inputText.trim());
+
+                String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/"
+                        + model + ":generateContent?key=" + apiKey.trim();
+
+                URL url = new URL(endpoint);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(12000);
+                conn.setReadTimeout(20000);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+                JSONObject part = new JSONObject().put("text", promptBuilder.toString());
+                JSONObject content = new JSONObject().put("parts", new JSONArray().put(part));
+                JSONObject payload = new JSONObject().put("contents", new JSONArray().put(content));
+
+                byte[] bodyBytes = payload.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bodyBytes);
+                }
+
+                int code = conn.getResponseCode();
+                InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+                StringBuilder sb = new StringBuilder();
+                if (is != null) {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = br.readLine()) != null) sb.append(line);
+                    }
+                }
+
+                if (code >= 200 && code < 300) {
+                    JSONObject resp = new JSONObject(sb.toString());
+                    String text = resp.getJSONArray("candidates")
+                            .getJSONObject(0)
+                            .getJSONObject("content")
+                            .getJSONArray("parts")
+                            .getJSONObject(0)
+                            .getString("text").trim();
+
+                    int approxTokens = (promptBuilder.length() + text.length()) / 3;
+                    prefs.recordAiUsage(approxTokens);
+                    MAIN.post(() -> callback.onResult(text));
                 } else {
-                    callGemini(apiKey, model, prompt, callback);
+                    MAIN.post(() -> callback.onError("خطأ من الخادم (" + code + "): تأكد من صحة مفتاح API"));
                 }
             } catch (Exception e) {
-                mainHandler.post(() -> callback.onResult(false, "تعذر الاتصال بخدمة الذكاء الاصطناعي: " + e.getMessage()));
+                MAIN.post(() -> callback.onError("تعذر الاتصال: " + e.getMessage()));
+            } finally {
+                if (conn != null) conn.disconnect();
             }
         });
-    }
-
-    private String buildPrompt(String text, Action action) {
-        switch (action) {
-            case PROOFREAD:
-                return "Correct spelling and grammar mistakes in the following text. Return ONLY the corrected text in the same language without explanations:\n" + text;
-            case REWRITE:
-                return "Rewrite the following text to sound clearer, more polished, and natural. Return ONLY the rewritten text in the same language:\n" + text;
-            case TRANSLATE:
-            default:
-                String target = prefs.getTranslationTargetLang();
-                return "Translate the following text accurately into " + target + ". Return ONLY the translation:\n" + text;
-        }
-    }
-
-    private void callGemini(String apiKey, String model, String prompt, AiCallback callback) throws Exception {
-        String safeModel = (model == null || model.trim().isEmpty()) ? "gemini-2.0-flash" : model.trim();
-        String url = "https://generativelanguage.googleapis.com/v1beta/models/" + safeModel + ":generateContent?key=" + apiKey;
-
-        JSONObject part = new JSONObject().put("text", prompt);
-        JSONObject content = new JSONObject().put("parts", new JSONArray().put(part));
-        JSONObject bodyJson = new JSONObject().put("contents", new JSONArray().put(content));
-
-        Request req = new Request.Builder()
-                .url(url)
-                .post(RequestBody.create(bodyJson.toString().getBytes(StandardCharsets.UTF_8),
-                        MediaType.parse("application/json; charset=utf-8")))
-                .build();
-
-        try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful() || resp.body() == null) {
-                int code = resp.code();
-                mainHandler.post(() -> callback.onResult(false, "فشل طلب Gemini API (رمز " + code + "). تحقق من المفتاح."));
-                return;
-            }
-            JSONObject root = new JSONObject(resp.body().string());
-            String text = root.getJSONArray("candidates")
-                    .getJSONObject(0)
-                    .getJSONObject("content")
-                    .getJSONArray("parts")
-                    .getJSONObject(0)
-                    .getString("text")
-                    .trim();
-            mainHandler.post(() -> callback.onResult(true, text));
-        }
-    }
-
-    private void callOpenAiCompatible(String apiKey, String model, String prompt, AiCallback callback) throws Exception {
-        String safeModel = (model == null || model.trim().isEmpty()) ? "gpt-4o-mini" : model.trim();
-        JSONObject msg = new JSONObject().put("role", "user").put("content", prompt);
-        JSONObject bodyJson = new JSONObject()
-                .put("model", safeModel)
-                .put("messages", new JSONArray().put(msg));
-
-        Request req = new Request.Builder()
-                .url("https://api.openai.com/v1/chat/completions")
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .post(RequestBody.create(bodyJson.toString().getBytes(StandardCharsets.UTF_8),
-                        MediaType.parse("application/json; charset=utf-8")))
-                .build();
-
-        try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful() || resp.body() == null) {
-                int code = resp.code();
-                mainHandler.post(() -> callback.onResult(false, "فشل طلب API (رمز " + code + "). تحقق من المفتاح."));
-                return;
-            }
-            JSONObject root = new JSONObject(resp.body().string());
-            String text = root.getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-                    .trim();
-            mainHandler.post(() -> callback.onResult(true, text));
-        }
     }
 }

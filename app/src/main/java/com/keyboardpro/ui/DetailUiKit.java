@@ -1,11 +1,15 @@
 package com.keyboardpro.ui;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
@@ -18,7 +22,9 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.materialswitch.MaterialSwitch;
 
 /**
- * Reusable Material 3 Dark/Light UI building blocks for Settings sub-screens.
+ * Reusable AMOLED Dark / Light Material 3 UI building blocks for Companion Screens.
+ * Includes RTL section headers with vertical blue pill indicator, colored circular icon rows,
+ * and the persistent Keyboard Test Modal dialog.
  */
 public final class DetailUiKit {
 
@@ -46,18 +52,103 @@ public final class DetailUiKit {
         return card;
     }
 
-    public static TextView createSectionTitle(Context ctx, String text) {
-        TextView tv = new TextView(ctx);
-        tv.setText(text);
-        tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_primary));
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        tv.setTypeface(Typeface.DEFAULT_BOLD);
+    /** RTL Section Header with vertical indigo-blue pill indicator (|). */
+    public static LinearLayout createSectionTitle(Context ctx, String text) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(ctx, 6);
+        lp.topMargin = dp(ctx, 10);
         lp.bottomMargin = dp(ctx, 8);
-        tv.setLayoutParams(lp);
-        return tv;
+        row.setLayoutParams(lp);
+
+        View pill = new View(ctx);
+        pill.setBackgroundResource(R.drawable.bg_pill_indicator);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(dp(ctx, 4), dp(ctx, 18));
+        plp.setMarginEnd(dp(ctx, 8));
+        pill.setLayoutParams(plp);
+        row.addView(pill);
+
+        TextView tv = new TextView(ctx);
+        tv.setText(text);
+        tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        row.addView(tv);
+        return row;
+    }
+
+    /** Setting / Customize navigation row with colored circular icon badge. */
+    public static LinearLayout createIconActionRow(Context ctx, String emojiIcon, int circleColor,
+                                                   String title, String subtitle,
+                                                   boolean showDivider, View.OnClickListener onClick) {
+        LinearLayout wrapper = new LinearLayout(ctx);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(ctx, 60));
+        row.setPadding(dp(ctx, 4), dp(ctx, 8), dp(ctx, 4), dp(ctx, 8));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setOnClickListener(onClick);
+
+        TextView badge = new TextView(ctx);
+        badge.setText(emojiIcon);
+        badge.setTextSize(18);
+        badge.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(Color.argb(42, Color.red(circleColor), Color.green(circleColor), Color.blue(circleColor)));
+        bg.setStroke(dp(ctx, 1), Color.argb(120, Color.red(circleColor), Color.green(circleColor), Color.blue(circleColor)));
+        badge.setBackground(bg);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(ctx, 42), dp(ctx, 42));
+        blp.setMarginEnd(dp(ctx, 12));
+        badge.setLayoutParams(blp);
+        row.addView(badge);
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
+        tvTitle.setTextSize(14.5f);
+        tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        texts.addView(tvTitle);
+
+        if (subtitle != null && !subtitle.isEmpty()) {
+            TextView tvSub = new TextView(ctx);
+            tvSub.setText(subtitle);
+            tvSub.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_secondary));
+            tvSub.setTextSize(12);
+            texts.addView(tvSub);
+        }
+        row.addView(texts);
+
+        TextView arrow = new TextView(ctx);
+        arrow.setText("‹");
+        arrow.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_muted));
+        arrow.setTextSize(20);
+        arrow.setPadding(dp(ctx, 6), 0, 0, 0);
+        row.addView(arrow);
+
+        wrapper.addView(row);
+
+        if (showDivider) {
+            View div = new View(ctx);
+            div.setBackgroundColor(ContextCompat.getColor(ctx, R.color.kp_stroke));
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(ctx, 1));
+            dlp.setMarginStart(dp(ctx, 54));
+            div.setLayoutParams(dlp);
+            wrapper.addView(div);
+        }
+        return wrapper;
     }
 
     public static TextView createBodyText(Context ctx, String text) {
@@ -195,6 +286,39 @@ public final class DetailUiKit {
         lp.bottomMargin = dp(ctx, 6);
         tv.setLayoutParams(lp);
         return tv;
+    }
+
+    /** Instant Test Keyboard modal triggered by the floating circular blue FAB on every screen. */
+    public static void showKeyboardTestDialog(Context ctx) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(ctx, 18), dp(ctx, 16), dp(ctx, 18), dp(ctx, 12));
+        box.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+
+        TextView hint = createBodyText(ctx, "جرّب الثيم الحالي، الزخرفة الفورية (✦)، الاختصارات مثل (سع)، أو الحاسبة (15*3=)");
+        box.addView(hint);
+
+        EditText et = createInput(ctx, ctx.getString(R.string.test_keyboard_hint), false);
+        et.setMinLines(3);
+        et.setGravity(Gravity.TOP | Gravity.START);
+        box.addView(et);
+
+        AlertDialog dialog = new AlertDialog.Builder(ctx)
+                .setTitle("⌨️ تجربة كيبورد برو")
+                .setView(box)
+                .setPositiveButton("تبديل الكيبورد", (d, w) -> {
+                    InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) imm.showInputMethodPicker();
+                })
+                .setNegativeButton("إغلاق", null)
+                .create();
+        dialog.show();
+
+        et.requestFocus();
+        et.postDelayed(() -> {
+            InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT);
+        }, 180);
     }
 
     public static int dp(Context ctx, int v) {

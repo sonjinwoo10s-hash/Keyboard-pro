@@ -1,103 +1,114 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">كيبورد برو</string>
-    <string name="app_subtitle">Keyboard Pro</string>
+    <string name="app_subtitle">Keyboard Pro — جميع الميزات مفتوحة</string>
     <string name="subtype_arabic">العربية — كيبورد برو</string>
     <string name="subtype_english">English — Keyboard Pro</string>
 
-    <!-- Bottom Navigation (3 Tabs Only) -->
+    <!-- Bottom Navigation (3 Tabs: Themes, Customize, Settings) -->
     <string name="nav_home">الرئيسية</string>
+    <string name="nav_customize">التخصيص</string>
     <string name="nav_settings">الإعدادات</string>
     <string name="nav_requests">الطلبات</string>
 
-    <!-- Top Bar & Pro -->
-    <string name="pro_crown_desc">ميزات كيبورد برو الذهبية</string>
-    <string name="pro_badge">برو</string>
-    <string name="pro_title">ميزات كيبورد برو الحصرية</string>
-    <string name="pro_subtitle">افتح كامل قدرات التصميم الكريستالي، التمويه الفوري، الحزم الحصرية، والنسخ السحابي التلقائي</string>
+    <!-- Top Bar & Test FAB -->
+    <string name="pro_crown_desc">جميع الميزات مفتوحة مجاناً</string>
+    <string name="pro_badge">مفتوح</string>
+    <string name="pro_title">جميع الميزات مفتوحة 100%</string>
+    <string name="pro_subtitle">كيبورد برو مجاني بالكامل بدون إعلانات أو اشتراكات — استمتع بأكثر من 42 ثيم كريستالي و56 زخرفة وذكاء اصطناعي BYOK</string>
+    <string name="test_kb_fab_desc">تجربة الكيبورد الآن</string>
 
-    <!-- Home Screen -->
+    <!-- Home Screen (Themes) -->
     <string name="setup_card_title">لنبدأ — خطوتان فقط</string>
-    <string name="setup_card_subtitle">فعّل لوحة المفاتيح واخترها كلوحة افتراضية للاستمتاع بجميع الميزات والزخارف</string>
+    <string name="setup_card_subtitle">فعّل كيبورد برو واختره كلوحة افتراضية للاستمتاع بجميع الميزات والزخارف</string>
     <string name="setup_step_1_btn">تفعيل</string>
     <string name="setup_step_1_done">تم التفعيل ✓</string>
     <string name="setup_step_2_btn">اختيار</string>
     <string name="setup_step_2_done">تم الاختيار ✓</string>
-    <string name="test_keyboard_hint">جرّب الكتابة والزخرفة هنا مباشرة...</string>
-    <string name="search_themes_hint">ابحث عن ثيم بالاسم أو اللون...</string>
-    <string name="tab_themes">الثيمات</string>
-    <string name="tab_pro">برو</string>
-    <string name="tab_my_themes">ثيماتي</string>
-    <string name="tab_users">المستخدمين</string>
-    <string name="section_new">جديدة</string>
-    <string name="section_basic">الأساسية</string>
-    <string name="section_custom">ثيماتي المخصصة</string>
-    <string name="section_community">ثيمات المستخدمين</string>
-    <string name="create_theme_btn">+ إنشاء ثيم جديد</string>
+    <string name="test_keyboard_hint">جرّب الكتابة، الزخرفة، الحاسبة (15*3=)، والأذكار هنا...</string>
+    <string name="search_themes_hint">ابحث عن ثيم بالاسم أو اللون (زجاجي، أزرق، ميكانيكي)...</string>
+
+    <!-- 7 Theme Filter Chips -->
+    <string name="chip_all">الكل</string>
+    <string name="chip_glass">زجاجية</string>
+    <string name="chip_material">ماتيريال</string>
+    <string name="chip_colorful">ملونة</string>
+    <string name="chip_dark">داكنة</string>
+    <string name="chip_light">فاتحة</string>
+    <string name="chip_mechanical">ميكانيكي</string>
+
+    <string name="create_theme_btn">+ محرر الثيمات (إنشاء ثيم مخصص)</string>
     <string name="theme_applied_toast">تم تطبيق الثيم: %1$s</string>
 
-    <!-- Settings Screen -->
+    <!-- Customize Screen (Tab 2) -->
+    <string name="cust_title">أدوات التصميم والتخصيص</string>
+    <string name="cust_theme_editor_title">محرر الثيمات الاحترافي</string>
+    <string name="cust_theme_editor_sub">خلفية صورة، تمويه، استخراج ألوان من الصورة، وتراجع/إعادة</string>
+    <string name="cust_key_fx_title">تأثيرات وحركات المفاتيح</string>
+    <string name="cust_key_fx_sub">9 حركات ضغط، 5 تأثيرات إضاءة، زوايا Squircle وعمق 3D</string>
+
+    <!-- Settings Screen (Tab 3) -->
     <string name="search_settings_hint">ابحث في الإعدادات...</string>
     <string name="app_appearance_card_title">لغة ومظهر التطبيق</string>
-    <string name="theme_dark">ليلي</string>
+    <string name="theme_dark">ليلي AMOLED</string>
     <string name="theme_light">نهاري</string>
     <string name="theme_auto">تلقائي</string>
     <string name="lang_arabic">العربية</string>
     <string name="lang_english">English</string>
-    <string name="whats_new_title">ما الجديد</string>
-    <string name="whats_new_sub">الإصدار %1$s — محرك الزخرفة الفوري وثيمات الكريستال</string>
-    <string name="ai_keyboard_title">كيبورد الذكاء الاصطناعي</string>
-    <string name="ai_keyboard_sub">تدقيق، إعادة صياغة، وترجمة بمفتاح API مجاني خاص بك</string>
+    <string name="whats_new_title">ما الجديد في كيبورد برو</string>
+    <string name="whats_new_sub">الإصدار %1$s — 42+ ثيم كريستالي، 56 زخرفة، 26 أداة، وذكاء Gemini</string>
+    <string name="ai_keyboard_title">كيبورد الذكاء الاصطناعي (Gemini)</string>
+    <string name="ai_keyboard_sub">15 أداة ذكية + أدواتك المخصصة بمفتاح API مشفّر محلياً</string>
 
     <!-- Settings Categories -->
-    <string name="cat_languages_typing">اللغات والكتابة</string>
-    <string name="cat_appearance_design">الشكل والتصميم</string>
-    <string name="cat_emoji_stickers">الإيموجي والملصقات</string>
-    <string name="cat_gestures_haptics">السحب واللمس والاهتزاز</string>
+    <string name="cat_languages_typing">اللغات والكتابة الذكية</string>
+    <string name="cat_appearance_design">الشكل والتصميم والحركات</string>
+    <string name="cat_emoji_stickers">الإيموجي والملصقات والزخرفة</string>
+    <string name="cat_gestures_haptics">الإيماءات والأصوات والاهتزاز</string>
     <string name="cat_clipboard_passwords">الحافظة وكلمات المرور</string>
-    <string name="cat_backup_sync">النسخ الاحتياطي والمزامنة</string>
+    <string name="cat_backup_sync">النسخ الاحتياطي وإعادة الضبط</string>
     <string name="cat_general_app">عام والتطبيق</string>
 
     <!-- Settings Items -->
-    <string name="set_languages_title">اللغات والتخطيط</string>
-    <string name="set_languages_sub">العربية والإنجليزية، صف الأرقام، وتخطيط آيفون</string>
-    <string name="set_smart_typing_title">الكتابة الذكية</string>
-    <string name="set_smart_typing_sub">الاقتراحات، التصحيح التلقائي، والتنبؤ بالكلمات</string>
+    <string name="set_languages_title">اللغات وتخطيطات الكيبورد</string>
+    <string name="set_languages_sub">5 تخطيطات عربية، 4 إنجليزية، صف الأرقام/الإيموجي، وأوضاع الشاشة</string>
+    <string name="set_smart_typing_title">الذكاء العربي والكتابة الذكية</string>
+    <string name="set_smart_typing_sub">الهمزات والتاء المربوطة، الفرانكو، الحاسبة الفورية، الأذكار، وتطبيقات البنوك</string>
     <string name="set_translation_title">الترجمة الفورية</string>
-    <string name="set_translation_sub">ترجمة فورية، النص المحدد، والحافظة بدون إنترنت</string>
-    <string name="set_dictionary_title">القاموس الشخصي</string>
-    <string name="set_dictionary_sub">إضافة وإدارة كلماتك الخاصة للتنبؤ السريع</string>
-    <string name="set_shortcuts_title">الاختصارات النصية</string>
-    <string name="set_shortcuts_sub">تحويل الرموز المختصرة تلقائياً إلى جمل كاملة</string>
+    <string name="set_translation_sub">ترجمة النصوص والرسائل مباشرة داخل لوحة المفاتيح</string>
+    <string name="set_dictionary_title">القاموس الشخصي والتعلم</string>
+    <string name="set_dictionary_sub">استيراد ملفات .txt، لصق جماعي، وإدارة الكلمات المتعلّمة</string>
+    <string name="set_shortcuts_title">الاختصارات النصية (37+)</string>
+    <string name="set_shortcuts_sub">37 اختصاراً جاهزاً مع البحث والتصدير والاستيراد</string>
 
     <string name="set_appearance_title">المظهر والأبعاد والتمويه</string>
-    <string name="set_appearance_sub">ارتفاع عمودي/أفقي مستقل، زجاج كريستال، وخلفية شفافة مموهة</string>
+    <string name="set_appearance_sub">ارتفاع عمودي/أفقي مستقل، زجاج كريستال، وتمويه Android 12+</string>
     <string name="set_fonts_title">الخطوط والكتابة باليونيكود</string>
-    <string name="set_fonts_sub">خطوط واجهة الكيبورد + 12 خط إنجليزي فوري + استيراد ملف خط</string>
-    <string name="set_layout_editor_title">محرر تخطيط المفاتيح</string>
-    <string name="set_layout_editor_sub">تخصيص أماكن المفاتيح وحفظ التخطيطات المخصصة</string>
+    <string name="set_fonts_sub">استيراد خط TTF/OTF مخصص + معاينة الخطوط</string>
+    <string name="set_layout_editor_title">صانع وتعديل التخطيطات</string>
+    <string name="set_layout_editor_sub">تخصيص صفوف وأماكن الحروف وحفظ تخطيطك الخاص</string>
 
-    <string name="set_emoji_title">أنماط الإيموجي</string>
-    <string name="set_emoji_sub">Fluent 3D، Twitter، Google، أو استيراد ملف إيموجي مخصص</string>
-    <string name="set_stickers_title">ملصقاتي وصانع GIF</string>
-    <string name="set_stickers_sub">إنشاء ملصقات مخصصة من الصور والنصوص لاستخدامها بالكيبورد</string>
-    <string name="set_decoration_title">الزخرفة الفورية والرموز</string>
-    <string name="set_decoration_sub">إدارة ومعاينة الزخارف العربية والخطوط الإنجليزية والرموز المخصصة</string>
+    <string name="set_emoji_title">الإيموجي والتكرار السريع</string>
+    <string name="set_emoji_sub">Fluent 3D، Twitter، Google، وتكرار 3×/5×/7×</string>
+    <string name="set_stickers_title">ملصقاتي وصانع الملصقات</string>
+    <string name="set_stickers_sub">إنشاء ملصقات مخصصة من الصور والنصوص والرموز</string>
+    <string name="set_decoration_title">الزخرفة الفورية (56 نمطاً)</string>
+    <string name="set_decoration_sub">26 زخرفة عربية + 30 خطاً إنجليزياً مع حماية كلمات المرور</string>
 
-    <string name="set_gestures_title">السحب والإيماءات</string>
-    <string name="set_gestures_sub">الكتابة بالسحب، تحريك المؤشر على المسافة، والسحب للحذف</string>
-    <string name="set_vibration_sound_title">الاهتزاز والأصوات الحصرية</string>
-    <string name="set_vibration_sound_sub">قوة الاهتزاز، وحزم أصوات المفاتيح الكريستالية والميكانيكية</string>
+    <string name="set_gestures_title">السحب وإيماءات الإصبعين</string>
+    <string name="set_gestures_sub">سحب المسافة، تأخير الضغط المطول، وسحب الإصبعين للأربع جهات</string>
+    <string name="set_vibration_sound_title">مصفوفة الصوت والاهتزاز (10 إجراءات)</string>
+    <string name="set_vibration_sound_sub">تحكم مستقل بالصوت والاهتزاز لكل نوع مفتاح وحزم الأصوات</string>
 
-    <string name="set_clipboard_title">سجل الحافظة</string>
-    <string name="set_clipboard_sub">عرض، تثبيت، والبحث في النصوص المنسوخة</string>
+    <string name="set_clipboard_title">الحافظة الذكية</string>
+    <string name="set_clipboard_sub">تثبيت العناصر، الحذف التلقائي بعد 3 أيام، والترتيب</string>
     <string name="set_keyboard_pass_title">Keyboard Pass — خزنة البصمة</string>
-    <string name="set_keyboard_pass_sub">حفظ الحسابات والبطاقات والآيبان والكتابة التلقائية ببصمة الإصبع</string>
+    <string name="set_keyboard_pass_sub">تشفير AES-256 للحسابات والبطاقات والآيبان ببصمة الإصبع</string>
 
-    <string name="set_local_backup_title">النسخ الاحتياطي المحلي</string>
-    <string name="set_local_backup_sub">تصدير واستيراد التخطيطات والقاموس والإعدادات كملف JSON</string>
-    <string name="set_cloud_sync_title">مزامنة الأجهزة عبر Google Drive</string>
-    <string name="set_cloud_sync_sub">نسخ احتياطي يومي تلقائي واستعادة سحابية</string>
+    <string name="set_local_backup_title">النسخ الاحتياطي وإعادة الضبط</string>
+    <string name="set_local_backup_sub">تصدير/استيراد JSON كامل + إعادة جميع الإعدادات للافتراضي</string>
+    <string name="set_cloud_sync_title">مزامنة Google Drive</string>
+    <string name="set_cloud_sync_sub">نسخ احتياطي يومي اختياري واستعادة سحابية</string>
 
     <string name="set_requests_shortcut_title">الطلبات والاقتراحات</string>
     <string name="set_requests_shortcut_sub">اقترح ميزة جديدة أو أبلغ عن مشكلة مباشرة</string>
@@ -115,18 +126,9 @@
     <string name="req_title_hint">عنوان مختصر للطلب (مطلوب)</string>
     <string name="req_desc_hint">اشرح الفكرة أو المشكلة بالتفصيل...</string>
     <string name="req_contact_hint">البريد الإلكتروني أو رقم الهاتف (اختياري)</string>
-    <string name="req_attach_image">إرفاق صورة توضيحية (حتى 2 ميجابايت مع ضغط تلقائي)</string>
+    <string name="req_attach_image">إرفاق صورة توضيحية (ضغط تلقائي)</string>
     <string name="req_device_info">معلومات الجهاز المرفقة</string>
-    <string name="req_privacy_note">الخصوصية: يتم إرسال معلومات الجهاز التقنية فقط لمساعدتنا في تحسين الأداء وحل المشكلات، ولا يتم جمع أي نصوص تكتبها بلوحة المفاتيح أبداً.</string>
+    <string name="req_privacy_note">الخصوصية 100%: لا يتم جمع أي نصوص تكتبها بلوحة المفاتيح أبداً، وكل بياناتك محفوظة محلياً على جهازك فقط.</string>
     <string name="req_submit_btn">إرسال الطلب</string>
     <string name="req_empty_mine">لم تقم بإرسال أي طلبات بعد. شاركنا فكرتك الأولى!</string>
-
-    <!-- IME Strings -->
-    <string name="ime_decoration_off">الزخرفة: متوقفة</string>
-    <string name="ime_decoration_on">الزخرفة مفعّلة</string>
-    <string name="ime_ai_proofread">تدقيق</string>
-    <string name="ime_ai_rewrite">إعادة صياغة</string>
-    <string name="ime_ai_translate">ترجمة</string>
-    <string name="ime_clipboard_empty">الحافظة فارغة حالياً</string>
-    <string name="ime_vault_locked">افتح Keyboard Pass من التطبيق للمصادقة بالبصمة</string>
 </resources>

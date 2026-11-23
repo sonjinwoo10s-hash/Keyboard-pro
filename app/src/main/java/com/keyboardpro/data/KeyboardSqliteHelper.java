@@ -152,6 +152,40 @@ public class KeyboardSqliteHelper extends SQLiteOpenHelper {
         getWritableDatabase().delete("dictionary", "word = ? AND is_personal = 1", new String[]{word});
     }
 
+    public void bulkAddPersonalWords(List<String> words) {
+        if (words == null || words.isEmpty()) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (String w : words) {
+                if (w == null || w.trim().isEmpty()) continue;
+                String trimmed = w.trim();
+                String lang = isArabicWord(trimmed) ? "ar" : "en";
+                insertWordInternal(db, trimmed, lang, 250, 1);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    public void learnTypedWord(String word) {
+        if (word == null) return;
+        String trimmed = word.trim();
+        if (trimmed.length() < 2 || trimmed.length() > 36) return;
+        String lang = isArabicWord(trimmed) ? "ar" : "en";
+        SQLiteDatabase db = getWritableDatabase();
+        int currentFreq = 120;
+        try (Cursor c = db.rawQuery("SELECT freq FROM dictionary WHERE word = ? LIMIT 1", new String[]{trimmed})) {
+            if (c.moveToFirst()) currentFreq = Math.min(999, c.getInt(0) + 5);
+        }
+        insertWordInternal(db, trimmed, lang, currentFreq, 1);
+    }
+
+    public void clearPersonalWords() {
+        getWritableDatabase().delete("dictionary", "is_personal = 1", null);
+    }
+
     public List<String> queryPersonalWords(int limit) {
         List<String> results = new ArrayList<>();
         String sql = "SELECT word FROM dictionary WHERE is_personal = 1 ORDER BY id DESC LIMIT ?";
@@ -166,9 +200,14 @@ public class KeyboardSqliteHelper extends SQLiteOpenHelper {
     // ---- On-Demand Indexed Clipboard Queries ----
 
     public List<ClipboardRepository.ClipItem> queryClipboard(int limit) {
+        return queryClipboard(limit, true);
+    }
+
+    public List<ClipboardRepository.ClipItem> queryClipboard(int limit, boolean newestFirst) {
         List<ClipboardRepository.ClipItem> results = new ArrayList<>();
+        String dir = newestFirst ? "DESC" : "ASC";
         String sql = "SELECT id, text, created_at, pinned FROM clipboard "
-                + "ORDER BY pinned DESC, created_at DESC LIMIT ?";
+                + "ORDER BY pinned DESC, created_at " + dir + " LIMIT ?";
         try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{String.valueOf(limit)})) {
             while (c.moveToNext()) {
                 results.add(new ClipboardRepository.ClipItem(
@@ -180,6 +219,11 @@ public class KeyboardSqliteHelper extends SQLiteOpenHelper {
             }
         }
         return results;
+    }
+
+    public void deleteOldUnpinnedClips(long cutoffTimestampMs) {
+        getWritableDatabase().delete("clipboard", "pinned = 0 AND created_at < ?",
+                new String[]{String.valueOf(cutoffTimestampMs)});
     }
 
     public void upsertClip(String id, String text, long timestamp) {

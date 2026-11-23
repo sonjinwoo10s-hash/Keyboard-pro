@@ -1,9 +1,9 @@
 package com.keyboardpro.ime;
 
 /**
- * Immutable keyboard visual theme model supporting solid, gradient, checkered,
- * transparent blur, and auto light/dark split backgrounds, plus flat, elevated,
- * neon outline, iPhone rounded, and glowing glass/crystal keys.
+ * Immutable keyboard visual theme model supporting 40+ presets across Glass, Material,
+ * Colorful, Dark, Light, and Mechanical filter groups, plus custom photo backgrounds,
+ * Squircle corners, 3D key depth, and Crystal Glassmorphism rendering.
  */
 public class KeyboardTheme {
 
@@ -12,7 +12,8 @@ public class KeyboardTheme {
         GRADIENT,
         CHECKERED,
         TRANSPARENT_BLUR,
-        AUTO_SPLIT
+        AUTO_SPLIT,
+        PHOTO
     }
 
     public enum KeyStyleType {
@@ -20,7 +21,9 @@ public class KeyboardTheme {
         ELEVATED,
         GLASS_CRYSTAL,
         NEON_OUTLINE,
-        IPHONE_ROUNDED
+        IPHONE_ROUNDED,
+        MECHANICAL_3D,
+        SKETCH_PENCIL
     }
 
     public enum Category {
@@ -31,10 +34,19 @@ public class KeyboardTheme {
         USERS
     }
 
+    public static final String FILTER_ALL = "all";
+    public static final String FILTER_GLASS = "glass";
+    public static final String FILTER_MATERIAL = "material";
+    public static final String FILTER_COLORFUL = "colorful";
+    public static final String FILTER_DARK = "dark";
+    public static final String FILTER_LIGHT = "light";
+    public static final String FILTER_MECHANICAL = "mechanical";
+
     public final String id;
     public final String nameAr;
     public final String nameEn;
     public final String colorTags;
+    public final String filterGroup;
     public final Category category;
     public final boolean isPro;
     public final BackgroundType backgroundType;
@@ -50,12 +62,14 @@ public class KeyboardTheme {
     public final int keyBorderColor;
     public final int accentColor;
     public final int toolbarBgColor;
+    public final String photoBgPath;
 
     public KeyboardTheme(
             String id,
             String nameAr,
             String nameEn,
             String colorTags,
+            String filterGroup,
             Category category,
             boolean isPro,
             BackgroundType backgroundType,
@@ -69,12 +83,14 @@ public class KeyboardTheme {
             int keySpecialTextColor,
             int keyBorderColor,
             int accentColor,
-            int toolbarBgColor
+            int toolbarBgColor,
+            String photoBgPath
     ) {
         this.id = id;
         this.nameAr = nameAr;
         this.nameEn = nameEn;
         this.colorTags = colorTags;
+        this.filterGroup = filterGroup;
         this.category = category;
         this.isPro = isPro;
         this.backgroundType = backgroundType;
@@ -89,6 +105,7 @@ public class KeyboardTheme {
         this.keyBorderColor = keyBorderColor;
         this.accentColor = accentColor;
         this.toolbarBgColor = toolbarBgColor;
+        this.photoBgPath = photoBgPath == null ? "" : photoBgPath;
     }
 
     public boolean matchesQuery(String query) {
@@ -97,5 +114,10 @@ public class KeyboardTheme {
         return nameAr.toLowerCase().contains(q)
                 || nameEn.toLowerCase().contains(q)
                 || colorTags.toLowerCase().contains(q);
+    }
+
+    public boolean matchesFilter(String filter) {
+        if (filter == null || FILTER_ALL.equals(filter)) return true;
+        return filter.equals(filterGroup);
     }
 }

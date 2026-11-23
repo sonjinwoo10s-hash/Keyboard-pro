@@ -1,26 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Light Mode Palette (when user selects نهاري or system is Light) -->
-    <color name="kp_bg">#F3F6FB</color>
+    <color name="kp_bg">#F4F5F8</color>
     <color name="kp_surface">#FFFFFF</color>
-    <color name="kp_surface_elevated">#E9EFF8</color>
-    <color name="kp_surface_glass">#EEFFFFFF</color>
-    <color name="kp_stroke">#D8E1EE</color>
-    <color name="kp_stroke_accent">#660099CC</color>
+    <color name="kp_surface_elevated">#EBEEF5</color>
+    <color name="kp_surface_glass">#F0FFFFFF</color>
+    <color name="kp_stroke">#D8DCE6</color>
+    <color name="kp_stroke_accent">#664E6BFF</color>
 
-    <color name="kp_primary">#008BBF</color>
-    <color name="kp_primary_dark">#006D96</color>
-    <color name="kp_primary_soft">#1A008BBF</color>
-    <color name="kp_secondary">#4F46E5</color>
-    <color name="kp_secondary_soft">#1A4F46E5</color>
+    <color name="kp_primary">#4E6BFF</color>
+    <color name="kp_primary_dark">#3652E0</color>
+    <color name="kp_primary_soft">#1E4E6BFF</color>
+    <color name="kp_secondary">#7C3AED</color>
+    <color name="kp_secondary_soft">#1A7C3AED</color>
 
     <color name="kp_gold">#D49B0E</color>
     <color name="kp_gold_dark">#A97A05</color>
     <color name="kp_gold_soft">#24F5C542</color>
 
-    <color name="kp_text_primary">#0F172A</color>
-    <color name="kp_text_secondary">#475569</color>
-    <color name="kp_text_muted">#64748B</color>
+    <color name="kp_text_primary">#111115</color>
+    <color name="kp_text_secondary">#525260</color>
+    <color name="kp_text_muted">#7A7A8A</color>
     <color name="kp_on_primary">#FFFFFF</color>
 
     <color name="kp_success">#059669</color>
@@ -30,7 +29,7 @@
     <color name="kp_warning">#D97706</color>
     <color name="kp_warning_soft">#1AD97706</color>
 
-    <color name="kp_nav_bg">#EBFFFFFF</color>
-    <color name="kp_nav_stroke">#CBD5E1</color>
-    <color name="kp_nav_active_pill">#1E008BBF</color>
+    <color name="kp_nav_bg">#F2FFFFFF</color>
+    <color name="kp_nav_stroke">#D8DCE6</color>
+    <color name="kp_nav_active_pill">#204E6BFF</color>
 </resources>

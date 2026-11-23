@@ -1,7 +1,6 @@
 package com.keyboardpro.ime;
 
 import android.content.Context;
-import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -17,76 +16,89 @@ import android.view.View;
 
 import com.keyboardpro.data.KeyboardPrefs;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Lightweight, low-RAM custom Canvas keyboard view.
- * - Strictly NO-SPLIT full-width layout in both portrait and landscape (zero center gap).
- * - Independent Portrait & Landscape heights and key text scaling.
- * - ZERO object allocations inside onDraw() via pre-allocated Paint, RectF, and FontMetrics.
- * - Supports swipe typing trail, spacebar cursor slide, swipe-to-delete, and long-press popups.
+ * High-performance Canvas keyboard view with ZERO allocations inside onDraw().
+ * - Strictly unified full-width in both Portrait and Landscape by default (no split gap).
+ * - Optional Split, Floating, One-Handed, and Landscape Right-Side Numpad modes (all OFF by default).
+ * - 9 key press animations (none, shake, tilt, bounce, scale, press, jelly, spin, sink).
+ * - 5 key lighting FX (none, glow, wave, spread, water).
+ * - Swipe typing, Spacebar cursor/language swipe, Swipe-to-delete, Long-press popups, and 2-finger swipes.
  */
 public class ProKeyboardView extends View {
 
     public interface OnKeyboardActionListener {
-        void onKeyOutput(String text, int code);
-        void onSpecialKey(int code);
-        void onSwipeWord(String rawPathChars);
-        void onCursorMove(int steps);
+        void onText(String text);
+        void onKeyCode(int code);
+        void onLongPressKey(KeyboardLayoutData.KeyItem key, RectF keyBounds);
+        void onCursorMove(int deltaSteps);
         void onSwipeDeleteWord();
-        void onKeyFeedback();
+        void onSwipeTypingResult(List<String> touchedLabels);
+        void onTwoFingerSwipe(String direction);
+        void onSpacebarLanguageSwipe();
+        void onKeyTouched(String matrixAction);
     }
 
-    private static class RenderedKey {
-        final KeyboardLayoutData.KeySpec spec;
-        final RectF rect;
-
-        RenderedKey(KeyboardLayoutData.KeySpec spec, RectF rect) {
-            this.spec = spec;
-            this.rect = rect;
-        }
+    private static final class KeyRect {
+        KeyboardLayoutData.KeyItem key;
+        final RectF rect = new RectF();
     }
 
-    private KeyboardPrefs prefs;
-    private KeyboardTheme theme;
-    private KeyboardLayoutData.KeyboardMode mode = KeyboardLayoutData.KeyboardMode.ARABIC;
-    private boolean shifted = false;
+    private static final String[][] NUMPAD_KEYS = {
+            {"7", "8", "9"},
+            {"4", "5", "6"},
+            {"1", "2", "3"},
+            {"0", ".", "⌫"}
+    };
+
     private OnKeyboardActionListener listener;
-
+    private KeyboardTheme theme;
+    private final KeyboardPrefs prefs;
     private final KeyboardVisualRenderer renderer = new KeyboardVisualRenderer();
-    private final List<RenderedKey> renderedKeys = new ArrayList<>(48);
 
-    // Pre-allocated drawing objects (zero allocations in onDraw)
-    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final List<KeyRect> keyRects = new ArrayList<>(64);
+    private List<List<KeyboardLayoutData.KeyItem>> currentRows = new ArrayList<>();
+
+    private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint hintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint swipePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint popupBgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint popupTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint swipeTrailPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint.FontMetrics reusableFm = new Paint.FontMetrics();
-    private final RectF reusablePopRect = new RectF();
-    private final RectF reusableBarRect = new RectF();
-    private final RectF reusableCellRect = new RectF();
+    private final Path swipePath = new Path();
+    private final RectF popupRect = new RectF();
+    private final RectF drawRect = new RectF();
 
-    private RenderedKey activeKey = null;
-    private RenderedKey longPressKey = null;
-    private int selectedAltIndex = 0;
+    private KeyRect activeKey = null;
+    private KeyRect lastAnimKey = null;
+    private long pressAnimStartMs = 0L;
+    private float fxCenterX = 0f, fxCenterY = 0f;
+    private long fxStartMs = 0L;
 
     private float downX, downY;
-    private float lastCursorX;
-    private boolean isSpaceSliding = false;
+    private float lastSpaceX;
+    private boolean isSpaceSwiping = false;
     private boolean isDeleteSwiping = false;
     private boolean isSwipeTyping = false;
-    private final Path swipePath = new Path();
-    private final StringBuilder swipeChars = new StringBuilder();
-    private String lastSwipedChar = "";
+    private boolean longPressTriggered = false;
+    private boolean isLandscape = false;
+    private final List<String> swipeTouchedLabels = new ArrayList<>();
+
+    // Two-finger gesture tracking
+    private boolean twoFingerActive = false;
+    private float twoFingerStartX, twoFingerStartY;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+
     private final Runnable longPressRunnable = () -> {
-        if (activeKey != null && activeKey.spec.longPressAlts != null
-                && activeKey.spec.longPressAlts.length > 0 && !isSwipeTyping) {
-            longPressKey = activeKey;
-            selectedAltIndex = 0;
+        if (activeKey != null && !isSpaceSwiping && !isSwipeTyping && !isDeleteSwiping) {
+            longPressTriggered = true;
+            if (listener != null) {
+                listener.onKeyTouched("long_press");
+                listener.onLongPressKey(activeKey.key, activeKey.rect);
+            }
             invalidate();
         }
     };
@@ -94,9 +106,10 @@ public class ProKeyboardView extends View {
     private final Runnable repeatDeleteRunnable = new Runnable() {
         @Override
         public void run() {
-            if (activeKey != null && activeKey.spec.code == KeyboardLayoutData.CODE_DELETE && !isDeleteSwiping) {
+            if (activeKey != null && activeKey.key.code == KeyboardLayoutData.CODE_BACKSPACE && !isDeleteSwiping) {
                 if (listener != null) {
-                    listener.onSpecialKey(KeyboardLayoutData.CODE_DELETE);
+                    listener.onKeyTouched("delete_repeat");
+                    listener.onKeyCode(KeyboardLayoutData.CODE_BACKSPACE);
                 }
                 handler.postDelayed(this, 65);
             }
@@ -104,137 +117,154 @@ public class ProKeyboardView extends View {
     };
 
     public ProKeyboardView(Context context) {
-        super(context);
-        init(context);
+        this(context, null);
     }
 
     public ProKeyboardView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        init(context);
+        this.prefs = new KeyboardPrefs(context);
+        this.theme = ThemeRegistry.getThemeById(context, prefs.getActiveThemeId());
+        initPaints();
     }
 
-    private void init(Context context) {
-        prefs = new KeyboardPrefs(context);
-        theme = ThemeRegistry.getThemeById(context, prefs.getActiveThemeId());
+    private void initPaints() {
+        labelPaint.setTextAlign(Paint.Align.CENTER);
+        labelPaint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
 
-        textPaint.setTextAlign(Paint.Align.CENTER);
+        hintPaint.setTextAlign(Paint.Align.RIGHT);
+        hintPaint.setTextSize(sp(9f));
+
+        swipePaint.setStyle(Paint.Style.STROKE);
+        swipePaint.setStrokeCap(Paint.Cap.ROUND);
+        swipePaint.setStrokeJoin(Paint.Join.ROUND);
+        swipePaint.setStrokeWidth(dp(5f));
+
         popupTextPaint.setTextAlign(Paint.Align.CENTER);
-
-        swipeTrailPaint.setStyle(Paint.Style.STROKE);
-        swipeTrailPaint.setStrokeCap(Paint.Cap.ROUND);
-        swipeTrailPaint.setStrokeJoin(Paint.Join.ROUND);
-        swipeTrailPaint.setStrokeWidth(dp(4.5f));
-        reloadConfig();
+        popupTextPaint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        popupTextPaint.setTextSize(sp(24f));
     }
 
-    public void setListener(OnKeyboardActionListener listener) {
+    public void setOnKeyboardActionListener(OnKeyboardActionListener listener) {
         this.listener = listener;
     }
 
-    public void setMode(KeyboardLayoutData.KeyboardMode mode) {
-        this.mode = mode;
-        this.shifted = false;
+    public void setCustomTypeface(Typeface tf) {
+        Typeface finalTf = tf != null ? tf : Typeface.create(Typeface.DEFAULT, Typeface.BOLD);
+        labelPaint.setTypeface(finalTf);
+        popupTextPaint.setTypeface(finalTf);
+        invalidate();
+    }
+
+    public void setTheme(KeyboardTheme theme) {
+        this.theme = theme;
+        renderer.releaseShaderCaches();
+        invalidate();
+    }
+
+    public void setLandscape(boolean landscape) {
+        this.isLandscape = landscape;
         computeKeyRects(getWidth(), getHeight());
         invalidate();
     }
 
-    public KeyboardLayoutData.KeyboardMode getMode() {
-        return mode;
-    }
-
-    public void toggleShift() {
-        this.shifted = !this.shifted;
+    public void setRows(List<List<KeyboardLayoutData.KeyItem>> rows) {
+        this.currentRows = rows != null ? rows : new ArrayList<>();
         computeKeyRects(getWidth(), getHeight());
         invalidate();
     }
 
     public void releaseCaches() {
-        handler.removeCallbacks(longPressRunnable);
-        handler.removeCallbacks(repeatDeleteRunnable);
+        handler.removeCallbacksAndMessages(null);
         activeKey = null;
-        longPressKey = null;
-        swipePath.reset();
-        swipeChars.setLength(0);
         renderer.releaseShaderCaches();
-    }
-
-    public void reloadConfig() {
-        theme = ThemeRegistry.getThemeById(getContext(), prefs.getActiveThemeId());
-        renderer.releaseShaderCaches();
-        String customFont = prefs.getCustomUiFontPath();
-        Typeface tf = Typeface.create(Typeface.DEFAULT, Typeface.BOLD);
-        if (customFont != null && !customFont.isEmpty()) {
-            File f = new File(customFont);
-            if (f.exists()) {
-                try {
-                    tf = Typeface.createFromFile(f);
-                } catch (Exception ignored) {
-                }
-            }
-        }
-        textPaint.setTypeface(tf);
-        popupTextPaint.setTypeface(tf);
-        swipeTrailPaint.setColor(theme.accentColor);
-        requestLayout();
-        computeKeyRects(getWidth(), getHeight());
-        invalidate();
-    }
-
-    private boolean isLandscape() {
-        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-    }
-
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int fullWidth = MeasureSpec.getSize(widthMeasureSpec);
-        int targetHeightDp = isLandscape() ? prefs.getLandscapeHeightDp() : prefs.getPortraitHeightDp();
-        int targetHeightPx = (int) dp(targetHeightDp);
-        setMeasuredDimension(fullWidth, targetHeightPx);
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        renderer.releaseShaderCaches();
         computeKeyRects(w, h);
     }
 
-    private void computeKeyRects(int width, int height) {
-        renderedKeys.clear();
-        if (width <= 0 || height <= 0) return;
+    private void computeKeyRects(int viewW, int viewH) {
+        keyRects.clear();
+        if (viewW <= 0 || viewH <= 0 || currentRows.isEmpty()) return;
 
-        List<List<KeyboardLayoutData.KeySpec>> rows = KeyboardLayoutData.buildRows(
-                mode,
-                shifted,
-                prefs.isNumbersRowEnabled(),
-                prefs.isIphoneLayoutEnabled(),
-                prefs.getCustomArabicLayoutJson()
-        );
+        float outerPadX = dp(4f);
+        float outerPadY = dp(4f);
+        float hGap = dp(4f);
+        float vGap = dp(5f);
 
-        int rowCount = rows.size();
-        float padH = dp(isLandscape() ? 4f : 3f);
-        float padV = dp(isLandscape() ? 3f : 4f);
-        float keyGapX = dp(isLandscape() ? 4f : 3.5f);
-        float keyGapY = dp(isLandscape() ? 4f : 5.5f);
+        float usableLeft = outerPadX;
+        float usableWidth = viewW - outerPadX * 2f;
 
-        float usableH = height - padV * 2f;
-        float rowH = (usableH - keyGapY * (rowCount - 1)) / rowCount;
+        // Optional One-Handed mode (82% width docked right for RTL)
+        if (!isLandscape && prefs.isOneHandedModeEnabled()) {
+            float targetW = usableWidth * 0.84f;
+            usableLeft = viewW - outerPadX - targetW;
+            usableWidth = targetW;
+        } else if (prefs.isFloatingModeEnabled()) {
+            float targetW = usableWidth * 0.88f;
+            usableLeft = (viewW - targetW) / 2f;
+            usableWidth = targetW;
+        }
+
+        // Optional Landscape Right-Side Numpad (OFF by default -> unified full-width!)
+        boolean showNumpad = isLandscape && prefs.isLandscapeNumpadEnabled();
+        float numpadWidth = showNumpad ? usableWidth * 0.24f : 0f;
+        float mainAreaWidth = showNumpad ? (usableWidth - numpadWidth - hGap * 2f) : usableWidth;
+
+        // Optional Split Mode (OFF by default -> strictly unified zero-gap!)
+        boolean split = prefs.isSplitModeEnabled() && viewW >= dp(460f);
+        float splitGap = split ? usableWidth * 0.14f : 0f;
+
+        int rowCount = currentRows.size();
+        float rowHeight = (viewH - outerPadY * 2f - vGap * (rowCount - 1)) / rowCount;
 
         for (int r = 0; r < rowCount; r++) {
-            List<KeyboardLayoutData.KeySpec> row = rows.get(r);
+            List<KeyboardLayoutData.KeyItem> row = currentRows.get(r);
+            if (row.isEmpty()) continue;
+
             float totalWeight = 0f;
-            for (KeyboardLayoutData.KeySpec k : row) {
-                totalWeight += k.weight;
+            for (KeyboardLayoutData.KeyItem k : row) totalWeight += k.weight;
+
+            float totalGaps = hGap * (row.size() - 1) + (split ? splitGap : 0f);
+            float availRowW = mainAreaWidth - totalGaps;
+            float x = usableLeft;
+            float top = outerPadY + r * (rowHeight + vGap);
+            int midIdx = row.size() / 2;
+
+            for (int c = 0; c < row.size(); c++) {
+                if (split && c == midIdx) {
+                    x += splitGap;
+                }
+                KeyboardLayoutData.KeyItem k = row.get(c);
+                float kw = availRowW * (k.weight / totalWeight);
+                KeyRect kr = new KeyRect();
+                kr.key = k;
+                kr.rect.set(x, top, x + kw, top + rowHeight);
+                keyRects.add(kr);
+                x += kw + hGap;
             }
+        }
 
-            float usableW = width - padH * 2f - keyGapX * (row.size() - 1);
-            float x = padH;
-            float top = padV + r * (rowH + keyGapY);
-
-            for (KeyboardLayoutData.KeySpec k : row) {
-                float keyW = (k.weight / totalWeight) * usableW;
-                renderedKeys.add(new RenderedKey(k, new RectF(x, top, x + keyW, top + rowH)));
-                x += keyW + keyGapX;
+        // Append right-side Numpad keys if enabled in landscape
+        if (showNumpad) {
+            float numLeft = usableLeft + mainAreaWidth + hGap * 2f;
+            float nRowH = (viewH - outerPadY * 2f - vGap * 3f) / 4f;
+            float nColW = (numpadWidth - hGap * 2f) / 3f;
+            for (int r = 0; r < 4; r++) {
+                float top = outerPadY + r * (nRowH + vGap);
+                for (int c = 0; c < 3; c++) {
+                    String lbl = NUMPAD_KEYS[r][c];
+                    KeyboardLayoutData.KeyItem item = "⌫".equals(lbl)
+                            ? KeyboardLayoutData.KeyItem.special("⌫", KeyboardLayoutData.CODE_BACKSPACE, 1f, false)
+                            : KeyboardLayoutData.KeyItem.ch(lbl, 1f, null, null);
+                    KeyRect kr = new KeyRect();
+                    kr.key = item;
+                    float left = numLeft + c * (nColW + hGap);
+                    kr.rect.set(left, top, left + nColW, top + nRowH);
+                    keyRects.add(kr);
+                }
             }
         }
     }
@@ -242,170 +272,266 @@ public class ProKeyboardView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        int w = getWidth();
-        int h = getHeight();
+        if (theme == null) return;
+        float w = getWidth();
+        float h = getHeight();
         if (w <= 0 || h <= 0) return;
 
-        renderer.drawBackground(
-                canvas, w, h, theme,
-                prefs.isTransparentBlurEnabled(),
-                prefs.getBlurStrength(),
-                false
-        );
-
-        float corner = dp(prefs.getKeyCornerRadiusDp());
-        float keyTextPx = sp(isLandscape() ? prefs.getLandscapeKeyTextSp() : prefs.getPortraitKeyTextSp());
+        boolean forceBlur = prefs.isTransparentBlurEnabled();
+        int blurStrength = prefs.getBlurStrength();
         boolean forceGlass = prefs.isGlassKeysForced();
+        int keyOpacity = prefs.getKeyOpacityPercent();
+        boolean squircle = prefs.isSquircleCorners();
+        boolean depth3d = prefs.isKey3dDepth();
+        boolean permGlow = prefs.isModifierPermanentGlow();
+        String animType = prefs.getKeyAnimation();
+        String lightingFx = prefs.getKeyLightingFx();
 
-        int count = renderedKeys.size();
-        for (int i = 0; i < count; i++) {
-            RenderedKey rk = renderedKeys.get(i);
-            boolean pressed = (rk == activeKey);
-            renderer.drawKey(canvas, rk.rect, corner, theme, rk.spec.isSpecial, pressed, forceGlass);
+        renderer.drawBackground(canvas, w, h, theme, forceBlur, blurStrength, false);
 
-            boolean isSpace = rk.spec.code == KeyboardLayoutData.CODE_SPACE;
-            textPaint.setTextSize(isSpace ? keyTextPx * 0.68f : (rk.spec.isSpecial ? keyTextPx * 0.85f : keyTextPx));
-            textPaint.setColor(rk.spec.isSpecial ? theme.keySpecialTextColor : theme.keyTextColor);
+        float cornerRadius = dp(prefs.getKeyCornerRadiusDp());
+        float baseTextPx = sp(isLandscape ? prefs.getLandscapeKeyTextSp() : prefs.getPortraitKeyTextSp());
+        float specialTextPx = baseTextPx * 0.80f;
 
-            textPaint.getFontMetrics(reusableFm);
-            float textY = rk.rect.centerY() - (reusableFm.ascent + reusableFm.descent) / 2f;
-            canvas.drawText(rk.spec.label, rk.rect.centerX(), textY, textPaint);
-        }
+        long now = System.currentTimeMillis();
+        boolean keepAnimating = false;
 
-        if (isSwipeTyping) {
-            swipeTrailPaint.setColor(theme.accentColor);
-            canvas.drawPath(swipePath, swipeTrailPaint);
-        }
-
-        if (activeKey != null && !activeKey.spec.isSpecial
-                && activeKey.spec.code != KeyboardLayoutData.CODE_SPACE
-                && longPressKey == null && !isSwipeTyping) {
-            float popW = Math.max(activeKey.rect.width() * 1.25f, dp(42f));
-            float popH = activeKey.rect.height() * 1.15f;
-            float left = Math.max(dp(4f), Math.min(w - popW - dp(4f), activeKey.rect.centerX() - popW / 2f));
-            float top = Math.max(dp(2f), activeKey.rect.top - popH - dp(6f));
-            reusablePopRect.set(left, top, left + popW, top + popH);
-
-            popupBgPaint.setColor(theme.accentColor);
-            canvas.drawRoundRect(reusablePopRect, corner + dp(3f), corner + dp(3f), popupBgPaint);
-
-            popupTextPaint.setColor(0xFF07131A);
-            popupTextPaint.setTextSize(keyTextPx * 1.3f);
-            popupTextPaint.getFontMetrics(reusableFm);
-            canvas.drawText(activeKey.spec.label, reusablePopRect.centerX(),
-                    reusablePopRect.centerY() - (reusableFm.ascent + reusableFm.descent) / 2f, popupTextPaint);
-        }
-
-        if (longPressKey != null && longPressKey.spec.longPressAlts != null) {
-            String[] alts = longPressKey.spec.longPressAlts;
-            float itemW = dp(38f);
-            float barW = itemW * alts.length + dp(8f);
-            float barH = dp(44f);
-            float left = Math.max(dp(4f), Math.min(w - barW - dp(4f), longPressKey.rect.centerX() - barW / 2f));
-            float top = Math.max(dp(2f), longPressKey.rect.top - barH - dp(6f));
-            reusableBarRect.set(left, top, left + barW, top + barH);
-
-            popupBgPaint.setColor(0xFF182235);
-            canvas.drawRoundRect(reusableBarRect, dp(12f), dp(12f), popupBgPaint);
-
-            for (int i = 0; i < alts.length; i++) {
-                reusableCellRect.set(left + dp(4f) + i * itemW, top + dp(4f),
-                        left + dp(4f) + (i + 1) * itemW, top + barH - dp(4f));
-                if (i == selectedAltIndex) {
-                    popupBgPaint.setColor(theme.accentColor);
-                    canvas.drawRoundRect(reusableCellRect, dp(8f), dp(8f), popupBgPaint);
-                    popupTextPaint.setColor(0xFF07131A);
-                } else {
-                    popupTextPaint.setColor(Color.WHITE);
-                }
-                popupTextPaint.setTextSize(keyTextPx);
-                popupTextPaint.getFontMetrics(reusableFm);
-                canvas.drawText(alts[i], reusableCellRect.centerX(),
-                        reusableCellRect.centerY() - (reusableFm.ascent + reusableFm.descent) / 2f, popupTextPaint);
+        // Lighting FX layer behind keys
+        if (!"none".equals(lightingFx) && fxStartMs > 0L) {
+            float fxProg = (now - fxStartMs) / 280f;
+            if (fxProg < 1f) {
+                renderer.drawLightingFx(canvas, fxCenterX, fxCenterY, fxProg, lightingFx,
+                        theme.accentColor, dp(68f));
+                keepAnimating = true;
+            } else {
+                fxStartMs = 0L;
             }
+        }
+
+        for (int i = 0; i < keyRects.size(); i++) {
+            KeyRect kr = keyRects.get(i);
+            boolean pressed = (kr == activeKey);
+            drawRect.set(kr.rect);
+
+            // Apply 9 Key Press Animations
+            boolean applyAnim = (kr == activeKey || (kr == lastAnimKey && (now - pressAnimStartMs) < 180L));
+            float rotDeg = 0f;
+            if (applyAnim && !"none".equals(animType)) {
+                float p = Math.min(1f, (now - pressAnimStartMs) / 180f);
+                if (p < 1f) keepAnimating = true;
+                float wave = (float) Math.sin(p * Math.PI);
+                switch (animType) {
+                    case "press":
+                        drawRect.inset(dp(1.5f) * wave, dp(1.5f) * wave);
+                        break;
+                    case "scale":
+                        drawRect.inset(-dp(2.5f) * wave, -dp(2.5f) * wave);
+                        break;
+                    case "bounce":
+                        drawRect.offset(0f, -dp(4.5f) * wave);
+                        break;
+                    case "sink":
+                        drawRect.offset(0f, dp(3.5f) * wave);
+                        break;
+                    case "shake":
+                        drawRect.offset((float) Math.sin(p * Math.PI * 4f) * dp(3f), 0f);
+                        break;
+                    case "tilt":
+                        rotDeg = wave * 7f;
+                        break;
+                    case "jelly":
+                        drawRect.inset(-dp(3f) * wave, dp(2f) * wave);
+                        break;
+                    case "spin":
+                        rotDeg = p * 360f;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            if (rotDeg != 0f) {
+                canvas.save();
+                canvas.rotate(rotDeg, drawRect.centerX(), drawRect.centerY());
+            }
+
+            renderer.drawKeyAdvanced(canvas, drawRect, cornerRadius, theme,
+                    kr.key.isSpecial, kr.key.isAccent, pressed, forceGlass,
+                    keyOpacity, squircle, depth3d, permGlow);
+
+            // Secondary hint label (top-right corner)
+            if (kr.key.secondaryLabel != null && !kr.key.secondaryLabel.isEmpty()) {
+                hintPaint.setColor(Color.argb(145, Color.red(theme.keyTextColor),
+                        Color.green(theme.keyTextColor), Color.blue(theme.keyTextColor)));
+                canvas.drawText(kr.key.secondaryLabel, drawRect.right - dp(4f), drawRect.top + dp(11f), hintPaint);
+            }
+
+            // Primary key label
+            boolean isWideLabel = kr.key.label.length() > 2;
+            labelPaint.setTextSize(isWideLabel ? specialTextPx * 0.85f
+                    : (kr.key.isSpecial ? specialTextPx : baseTextPx));
+            labelPaint.setColor(kr.key.isAccent ? Color.WHITE
+                    : (kr.key.isSpecial ? theme.keySpecialTextColor : theme.keyTextColor));
+            labelPaint.getFontMetrics(reusableFm);
+            float textY = drawRect.centerY() - (reusableFm.ascent + reusableFm.descent) / 2f;
+            canvas.drawText(kr.key.label, drawRect.centerX(), textY, labelPaint);
+
+            if (rotDeg != 0f) {
+                canvas.restore();
+            }
+        }
+
+        // Swipe trail
+        if (isSwipeTyping && !swipePath.isEmpty()) {
+            swipePaint.setColor(Color.argb(190, Color.red(theme.accentColor),
+                    Color.green(theme.accentColor), Color.blue(theme.accentColor)));
+            canvas.drawPath(swipePath, swipePaint);
+        }
+
+        // Floating key preview bubble on press
+        if (activeKey != null && !activeKey.key.isSpecial
+                && activeKey.key.code != KeyboardLayoutData.CODE_SPACE
+                && !isSwipeTyping && !longPressTriggered) {
+            float pw = Math.max(activeKey.rect.width() * 1.25f, dp(42f));
+            float ph = activeKey.rect.height() * 1.15f;
+            float cx = activeKey.rect.centerX();
+            float left = Math.max(dp(4f), Math.min(w - pw - dp(4f), cx - pw / 2f));
+            float bottom = activeKey.rect.top - dp(4f);
+            float top = Math.max(dp(2f), bottom - ph);
+            popupRect.set(left, top, left + pw, bottom);
+            popupBgPaint.setColor(theme.accentColor);
+            canvas.drawRoundRect(popupRect, dp(10f), dp(10f), popupBgPaint);
+            popupTextPaint.setColor(Color.WHITE);
+            popupTextPaint.getFontMetrics(reusableFm);
+            canvas.drawText(activeKey.key.label, popupRect.centerX(),
+                    popupRect.centerY() - (reusableFm.ascent + reusableFm.descent) / 2f, popupTextPaint);
+        }
+
+        if (keepAnimating) {
+            postInvalidateOnAnimation();
         }
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+
+        // Two-finger gesture detection
+        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount() == 2) {
+            twoFingerActive = true;
+            twoFingerStartX = (event.getX(0) + event.getX(1)) * 0.5f;
+            twoFingerStartY = (event.getY(0) + event.getY(1)) * 0.5f;
+            handler.removeCallbacks(longPressRunnable);
+            handler.removeCallbacks(repeatDeleteRunnable);
+            activeKey = null;
+            invalidate();
+            return true;
+        }
+        if (twoFingerActive) {
+            if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                float endX = event.getPointerCount() >= 2 ? (event.getX(0) + event.getX(1)) * 0.5f : event.getX(0);
+                float endY = event.getPointerCount() >= 2 ? (event.getY(0) + event.getY(1)) * 0.5f : event.getY(0);
+                float dx = endX - twoFingerStartX;
+                float dy = endY - twoFingerStartY;
+                float thresh = dp(42f);
+                if (listener != null && (Math.abs(dx) > thresh || Math.abs(dy) > thresh)) {
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        listener.onTwoFingerSwipe(dx > 0 ? "right" : "left");
+                    } else {
+                        listener.onTwoFingerSwipe(dy > 0 ? "down" : "up");
+                    }
+                }
+                twoFingerActive = false;
+            }
+            return true;
+        }
+
         float x = event.getX();
         float y = event.getY();
 
-        switch (event.getActionMasked()) {
+        switch (action) {
             case MotionEvent.ACTION_DOWN: {
                 downX = x;
                 downY = y;
-                lastCursorX = x;
-                isSpaceSliding = false;
+                lastSpaceX = x;
+                isSpaceSwiping = false;
                 isDeleteSwiping = false;
                 isSwipeTyping = false;
-                longPressKey = null;
+                longPressTriggered = false;
                 swipePath.reset();
-                swipeChars.setLength(0);
-                lastSwipedChar = "";
+                swipeTouchedLabels.clear();
 
                 activeKey = findKeyAt(x, y);
                 if (activeKey != null) {
-                    if (listener != null) listener.onKeyFeedback();
-                    if (activeKey.spec.code == KeyboardLayoutData.CODE_DELETE) {
-                        handler.postDelayed(repeatDeleteRunnable, 360);
-                    } else if (!activeKey.spec.isSpecial && activeKey.spec.code != KeyboardLayoutData.CODE_SPACE) {
-                        swipePath.moveTo(x, y);
-                        swipeChars.append(activeKey.spec.output);
-                        lastSwipedChar = activeKey.spec.output;
-                        handler.postDelayed(longPressRunnable, 340);
+                    lastAnimKey = activeKey;
+                    pressAnimStartMs = System.currentTimeMillis();
+                    fxCenterX = activeKey.rect.centerX();
+                    fxCenterY = activeKey.rect.centerY();
+                    fxStartMs = pressAnimStartMs;
+
+                    if (listener != null) {
+                        listener.onKeyTouched(resolveMatrixAction(activeKey.key));
                     }
-                    invalidate();
+                    if (activeKey.key.code == KeyboardLayoutData.CODE_BACKSPACE) {
+                        handler.postDelayed(repeatDeleteRunnable, 340);
+                    } else if (activeKey.key.code == KeyboardLayoutData.CODE_ENTER
+                            || (activeKey.key.popupChars != null && activeKey.key.popupChars.length > 0)) {
+                        handler.postDelayed(longPressRunnable, prefs.getLongPressDelayMs());
+                    }
+                    if (!activeKey.key.isSpecial && activeKey.key.code == 0) {
+                        swipePath.moveTo(x, y);
+                        swipeTouchedLabels.add(activeKey.key.output);
+                    }
                 }
+                invalidate();
                 return true;
             }
 
             case MotionEvent.ACTION_MOVE: {
                 if (activeKey == null) return true;
+                float dx = x - downX;
+                float dy = y - downY;
 
-                if (longPressKey != null && longPressKey.spec.longPressAlts != null) {
-                    String[] alts = longPressKey.spec.longPressAlts;
-                    float dx = x - longPressKey.rect.centerX();
-                    int offset = Math.round(dx / dp(36f));
-                    selectedAltIndex = Math.max(0, Math.min(alts.length - 1, (alts.length / 2) + offset));
-                    invalidate();
-                    return true;
-                }
-
-                if (activeKey.spec.code == KeyboardLayoutData.CODE_SPACE && prefs.isCursorControlEnabled()) {
-                    float stepPx = dp(18f);
-                    float dx = x - lastCursorX;
-                    if (Math.abs(dx) >= stepPx) {
-                        isSpaceSliding = true;
-                        int steps = (int) (dx / stepPx);
-                        lastCursorX = x;
-                        if (listener != null) listener.onCursorMove(steps);
+                // Spacebar swipe: cursor control or language switch
+                if (activeKey.key.code == KeyboardLayoutData.CODE_SPACE) {
+                    String mode = prefs.getSpacebarSwipeMode();
+                    if ("cursor".equals(mode)) {
+                        float stepPx = dp(18f);
+                        float delta = x - lastSpaceX;
+                        if (Math.abs(delta) >= stepPx) {
+                            isSpaceSwiping = true;
+                            int steps = (int) (delta / stepPx);
+                            lastSpaceX = x;
+                            if (listener != null) listener.onCursorMove(steps);
+                        }
+                    } else if ("lang".equals(mode) && Math.abs(dx) > dp(44f) && !isSpaceSwiping) {
+                        isSpaceSwiping = true;
+                        if (listener != null) listener.onSpacebarLanguageSwipe();
                     }
                     return true;
                 }
 
-                if (activeKey.spec.code == KeyboardLayoutData.CODE_DELETE && prefs.isSwipeToDeleteEnabled()) {
-                    if (downX - x > dp(42f) && !isDeleteSwiping) {
+                // Swipe-to-delete from Backspace
+                if (activeKey.key.code == KeyboardLayoutData.CODE_BACKSPACE && prefs.isSwipeToDeleteEnabled()) {
+                    if (Math.abs(dx) > dp(34f)) {
                         isDeleteSwiping = true;
                         handler.removeCallbacks(repeatDeleteRunnable);
-                        if (listener != null) listener.onSwipeDeleteWord();
                     }
                     return true;
                 }
 
-                if (prefs.isSwipeTypingEnabled() && !activeKey.spec.isSpecial
-                        && activeKey.spec.code != KeyboardLayoutData.CODE_SPACE) {
-                    float dist = (float) Math.hypot(x - downX, y - downY);
-                    if (dist > dp(22f)) {
+                // Swipe typing across letter keys
+                if (prefs.isSwipeTypingEnabled() && !activeKey.key.isSpecial && activeKey.key.code == 0) {
+                    if (Math.hypot(dx, dy) > dp(24f)) {
                         isSwipeTyping = true;
                         handler.removeCallbacks(longPressRunnable);
                         swipePath.lineTo(x, y);
-                        RenderedKey hovered = findKeyAt(x, y);
-                        if (hovered != null && !hovered.spec.isSpecial
-                                && hovered.spec.code != KeyboardLayoutData.CODE_SPACE
-                                && !hovered.spec.output.equals(lastSwipedChar)) {
-                            swipeChars.append(hovered.spec.output);
-                            lastSwipedChar = hovered.spec.output;
+                        KeyRect over = findKeyAt(x, y);
+                        if (over != null && !over.key.isSpecial && over.key.code == 0) {
+                            String lbl = over.key.output;
+                            if (swipeTouchedLabels.isEmpty() || !swipeTouchedLabels.get(swipeTouchedLabels.size() - 1).equals(lbl)) {
+                                swipeTouchedLabels.add(lbl);
+                            }
                         }
                         invalidate();
                     }
@@ -413,58 +539,61 @@ public class ProKeyboardView extends View {
                 return true;
             }
 
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL: {
+            case MotionEvent.ACTION_UP: {
                 handler.removeCallbacks(longPressRunnable);
                 handler.removeCallbacks(repeatDeleteRunnable);
 
-                if (event.getActionMasked() == MotionEvent.ACTION_UP && activeKey != null && listener != null) {
-                    if (longPressKey != null && longPressKey.spec.longPressAlts != null) {
-                        String alt = longPressKey.spec.longPressAlts[selectedAltIndex];
-                        listener.onKeyOutput(alt, alt.codePointAt(0));
-                    } else if (isSwipeTyping && swipeChars.length() >= 2) {
-                        listener.onSwipeWord(swipeChars.toString());
-                    } else if (!isSpaceSliding && !isDeleteSwiping) {
-                        if (activeKey.spec.isSpecial) {
-                            listener.onSpecialKey(activeKey.spec.code);
-                        } else {
-                            listener.onKeyOutput(activeKey.spec.output, activeKey.spec.code);
+                if (activeKey != null) {
+                    if (isDeleteSwiping) {
+                        if (listener != null) {
+                            listener.onKeyTouched("swipe_delete");
+                            listener.onSwipeDeleteWord();
+                        }
+                    } else if (isSwipeTyping && swipeTouchedLabels.size() >= 2) {
+                        if (listener != null) listener.onSwipeTypingResult(new ArrayList<>(swipeTouchedLabels));
+                    } else if (!isSpaceSwiping && !longPressTriggered) {
+                        if (listener != null) {
+                            if (activeKey.key.code != 0) {
+                                listener.onKeyCode(activeKey.key.code);
+                            } else if (activeKey.key.output != null && !activeKey.key.output.isEmpty()) {
+                                listener.onText(activeKey.key.output);
+                            }
                         }
                     }
                 }
-
                 activeKey = null;
-                longPressKey = null;
                 isSwipeTyping = false;
-                isSpaceSliding = false;
-                isDeleteSwiping = false;
                 swipePath.reset();
                 invalidate();
                 return true;
             }
+
+            case MotionEvent.ACTION_CANCEL:
+                handler.removeCallbacks(longPressRunnable);
+                handler.removeCallbacks(repeatDeleteRunnable);
+                activeKey = null;
+                isSwipeTyping = false;
+                swipePath.reset();
+                invalidate();
+                return true;
         }
         return super.onTouchEvent(event);
     }
 
-    private RenderedKey findKeyAt(float x, float y) {
-        int count = renderedKeys.size();
-        for (int i = 0; i < count; i++) {
-            RenderedKey rk = renderedKeys.get(i);
-            if (rk.rect.contains(x, y)) return rk;
+    private String resolveMatrixAction(KeyboardLayoutData.KeyItem key) {
+        if (key.code == KeyboardLayoutData.CODE_SPACE) return "space";
+        if (key.code == KeyboardLayoutData.CODE_ENTER) return "enter";
+        if (key.code == KeyboardLayoutData.CODE_BACKSPACE) return "delete";
+        if (key.isSpecial) return "function";
+        return "letters";
+    }
+
+    private KeyRect findKeyAt(float x, float y) {
+        for (int i = 0; i < keyRects.size(); i++) {
+            KeyRect kr = keyRects.get(i);
+            if (kr.rect.contains(x, y)) return kr;
         }
-        RenderedKey nearest = null;
-        float minD = Float.MAX_VALUE;
-        for (int i = 0; i < count; i++) {
-            RenderedKey rk = renderedKeys.get(i);
-            float dx = x - rk.rect.centerX();
-            float dy = y - rk.rect.centerY();
-            float d = dx * dx + dy * dy;
-            if (d < minD) {
-                minD = d;
-                nearest = rk;
-            }
-        }
-        return nearest;
+        return null;
     }
 
     private float dp(float v) {

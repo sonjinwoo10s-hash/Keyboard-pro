@@ -1,7 +1,6 @@
 package com.keyboardpro.ui;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
@@ -25,23 +24,35 @@ import androidx.core.view.WindowInsetsCompat;
 
 import com.example.R;
 import com.keyboardpro.data.BackupManager;
+import com.keyboardpro.data.BitmapUtils;
 import com.keyboardpro.data.KeyboardPrefs;
+import com.keyboardpro.data.KeyboardSqliteHelper;
 import com.keyboardpro.data.StickerRepository;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Host activity for all Settings sub-screens, Pro Crown Showcase, BiometricPrompt Keyboard Pass,
- * zero-permission Photo Picker sticker creation, and SAF font/backup import/export.
+ * Host activity for all Customize & Settings sub-screens, Theme Editor (Photo Picker),
+ * Key Press FX, Bulk .txt Dictionary Import, Biometric Keyboard Pass, and persistent
+ * floating circular blue Keyboard Test FAB.
  */
 public class SettingsDetailActivity extends AppCompatActivity
-        implements TypingAndDesignBuilder.HostActions, MediaAndSecurityBuilder.SecurityHostActions {
+        implements TypingAndDesignBuilder.HostActions,
+        MediaAndSecurityBuilder.SecurityHostActions,
+        ThemeEditorBuilder.ThemeEditorHost {
 
     public static final String EXTRA_SECTION = "extra_section";
 
     public static final String SEC_PRO = "pro";
+    public static final String SEC_THEME_EDITOR = "theme_editor";
+    public static final String SEC_KEY_FX = "key_fx";
     public static final String SEC_AI = "ai";
     public static final String SEC_LANGUAGES = "languages";
     public static final String SEC_SMART_TYPING = "smart_typing";
@@ -60,21 +71,33 @@ public class SettingsDetailActivity extends AppCompatActivity
     public static final String SEC_KEYBOARD_PASS = "keyboard_pass";
     public static final String SEC_BACKUP = "backup";
     public static final String SEC_CLOUD_SYNC = "cloud_sync";
+    public static final String SEC_REQUESTS = "requests";
 
     private KeyboardPrefs prefs;
     private BackupManager backupManager;
     private String section;
     private LinearLayout contentContainer;
     private boolean pickingEmojiFont = false;
+    private ThemeEditorBuilder.PhotoCallback pendingThemePhotoCallback;
 
     private final ActivityResultLauncher<String[]> fontPickerLauncher =
             registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
                 if (uri != null) copyImportedFont(uri, pickingEmojiFont);
             });
 
+    private final ActivityResultLauncher<String[]> dictTxtLauncher =
+            registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
+                if (uri != null) importDictionaryTxt(uri);
+            });
+
     private final ActivityResultLauncher<PickVisualMediaRequest> stickerPhotoLauncher =
             registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
                 if (uri != null) createStickerFromPhoto(uri);
+            });
+
+    private final ActivityResultLauncher<PickVisualMediaRequest> themePhotoLauncher =
+            registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
+                if (uri != null) saveThemePhoto(uri);
             });
 
     private final ActivityResultLauncher<String> exportBackupLauncher =
@@ -107,6 +130,7 @@ public class SettingsDetailActivity extends AppCompatActivity
         if (section == null) section = SEC_APPEARANCE;
 
         View toolbar = findViewById(R.id.detail_toolbar);
+        View fab = findViewById(R.id.fab_detail_test_keyboard);
         int baseTop = toolbar.getPaddingTop();
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.detail_root), (v, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -117,6 +141,8 @@ public class SettingsDetailActivity extends AppCompatActivity
         });
 
         findViewById(R.id.btn_detail_back).setOnClickListener(v -> finish());
+        fab.setOnClickListener(v -> DetailUiKit.showKeyboardTestDialog(this));
+
         TextView tvTitle = findViewById(R.id.tv_detail_title);
         tvTitle.setText(resolveTitle(section));
 
@@ -127,11 +153,17 @@ public class SettingsDetailActivity extends AppCompatActivity
     private void renderSection() {
         contentContainer.removeAllViews();
         switch (section) {
+            case SEC_THEME_EDITOR:
+                ThemeEditorBuilder.buildThemeEditor(this, contentContainer, prefs, this);
+                break;
+            case SEC_KEY_FX:
+                ThemeEditorBuilder.buildKeyFx(this, contentContainer, prefs, this);
+                break;
             case SEC_LANGUAGES:
-                TypingAndDesignBuilder.buildLanguages(this, contentContainer, prefs);
+                TypingAndDesignBuilder.buildLanguages(this, contentContainer, prefs, this);
                 break;
             case SEC_SMART_TYPING:
-                TypingAndDesignBuilder.buildSmartTyping(this, contentContainer, prefs);
+                TypingAndDesignBuilder.buildSmartTyping(this, contentContainer, prefs, this);
                 break;
             case SEC_TRANSLATION:
                 TypingAndDesignBuilder.buildTranslation(this, contentContainer, prefs);
@@ -161,13 +193,13 @@ public class SettingsDetailActivity extends AppCompatActivity
                 MediaAndSecurityBuilder.buildStickers(this, contentContainer, this);
                 break;
             case SEC_GESTURES:
-                MediaAndSecurityBuilder.buildGestures(this, contentContainer, prefs);
+                MediaAndSecurityBuilder.buildGestures(this, contentContainer, prefs, this);
                 break;
             case SEC_HAPTICS:
                 MediaAndSecurityBuilder.buildHapticsAndSound(this, contentContainer, prefs, this);
                 break;
             case SEC_CLIPBOARD:
-                MediaAndSecurityBuilder.buildClipboard(this, contentContainer, this);
+                MediaAndSecurityBuilder.buildClipboard(this, contentContainer, prefs, this);
                 break;
             case SEC_KEYBOARD_PASS:
                 MediaAndSecurityBuilder.buildKeyboardPass(this, contentContainer, this);
@@ -176,20 +208,32 @@ public class SettingsDetailActivity extends AppCompatActivity
                 MediaAndSecurityBuilder.buildAiKeyboard(this, contentContainer, prefs, this);
                 break;
             case SEC_BACKUP:
-                MediaAndSecurityBuilder.buildLocalBackup(this, contentContainer, this);
+                MediaAndSecurityBuilder.buildLocalBackup(this, contentContainer, prefs, this);
                 break;
             case SEC_CLOUD_SYNC:
                 MediaAndSecurityBuilder.buildCloudSync(this, contentContainer, prefs, this);
                 break;
+            case SEC_REQUESTS: {
+                android.widget.FrameLayout host = new android.widget.FrameLayout(this);
+                host.setId(View.generateViewId());
+                contentContainer.addView(host, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                getSupportFragmentManager().beginTransaction()
+                        .replace(host.getId(), new RequestsFragment())
+                        .commit();
+                break;
+            }
             case SEC_PRO:
             default:
-                MediaAndSecurityBuilder.buildProShowcase(this, contentContainer, prefs, this);
+                MediaAndSecurityBuilder.buildProShowcase(this, contentContainer);
                 break;
         }
     }
 
     private String resolveTitle(String sec) {
         switch (sec) {
+            case SEC_THEME_EDITOR: return getString(R.string.cust_theme_editor_title);
+            case SEC_KEY_FX: return getString(R.string.cust_key_fx_title);
             case SEC_LANGUAGES: return getString(R.string.set_languages_title);
             case SEC_SMART_TYPING: return getString(R.string.set_smart_typing_title);
             case SEC_TRANSLATION: return getString(R.string.set_translation_title);
@@ -208,6 +252,7 @@ public class SettingsDetailActivity extends AppCompatActivity
             case SEC_AI: return getString(R.string.ai_keyboard_title);
             case SEC_BACKUP: return getString(R.string.set_local_backup_title);
             case SEC_CLOUD_SYNC: return getString(R.string.set_cloud_sync_title);
+            case SEC_REQUESTS: return getString(R.string.set_requests_shortcut_title);
             case SEC_PRO:
             default: return getString(R.string.pro_title);
         }
@@ -220,6 +265,11 @@ public class SettingsDetailActivity extends AppCompatActivity
     }
 
     @Override
+    public void pickDictionaryTxtFile() {
+        dictTxtLauncher.launch(new String[]{"text/plain", "*/*"});
+    }
+
+    @Override
     public void pickEmojiFontFile() {
         pickingEmojiFont = true;
         fontPickerLauncher.launch(new String[]{"font/ttf", "font/otf", "application/octet-stream", "*/*"});
@@ -228,6 +278,14 @@ public class SettingsDetailActivity extends AppCompatActivity
     @Override
     public void pickStickerPhoto() {
         stickerPhotoLauncher.launch(new PickVisualMediaRequest.Builder()
+                .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
+                .build());
+    }
+
+    @Override
+    public void pickThemeBackgroundPhoto(ThemeEditorBuilder.PhotoCallback callback) {
+        pendingThemePhotoCallback = callback;
+        themePhotoLauncher.launch(new PickVisualMediaRequest.Builder()
                 .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
                 .build());
     }
@@ -250,7 +308,6 @@ public class SettingsDetailActivity extends AppCompatActivity
                 | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
 
         if (bm.canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
-            // Device/emulator has no enrolled fingerprint/PIN — allow fallback with notice
             Toast.makeText(this, "لم يتم إعداد قفل بصمة على الجهاز — تم فتح الخزنة مؤقتاً", Toast.LENGTH_SHORT).show();
             onSuccess.run();
             return;
@@ -309,9 +366,27 @@ public class SettingsDetailActivity extends AppCompatActivity
         }
     }
 
+    private void importDictionaryTxt(Uri uri) {
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is == null) return;
+            List<String> words = new ArrayList<>();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null && words.size() < 2000) {
+                    if (!line.trim().isEmpty()) words.add(line.trim());
+                }
+            }
+            KeyboardSqliteHelper.getInstance(this).bulkAddPersonalWords(words);
+            Toast.makeText(this, "تم استيراد " + words.size() + " كلمة إلى القاموس ✅", Toast.LENGTH_LONG).show();
+            refreshScreen();
+        } catch (Exception e) {
+            Toast.makeText(this, "تعذر قراءة الملف النصي", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void createStickerFromPhoto(Uri uri) {
         try {
-            Bitmap bmp = com.keyboardpro.data.BitmapUtils.decodeSampledFromUri(this, uri, 384, 384);
+            Bitmap bmp = BitmapUtils.decodeSampledFromUri(this, uri, 384, 384);
             if (bmp == null) return;
             new StickerRepository(this).saveStickerBitmap("ملصق صورة 📷", bmp, false);
             bmp.recycle();
@@ -319,6 +394,26 @@ public class SettingsDetailActivity extends AppCompatActivity
             refreshScreen();
         } catch (Exception e) {
             Toast.makeText(this, "تعذر إنشاء الملصق من الصورة", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void saveThemePhoto(Uri uri) {
+        try {
+            Bitmap bmp = BitmapUtils.decodeSampledFromUri(this, uri, 720, 420);
+            if (bmp == null) return;
+            File dir = new File(getFilesDir(), "theme_bgs");
+            if (!dir.exists()) dir.mkdirs();
+            File out = new File(dir, "bg_" + System.currentTimeMillis() + ".jpg");
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                bmp.compress(Bitmap.CompressFormat.JPEG, 82, fos);
+            }
+            bmp.recycle();
+            if (pendingThemePhotoCallback != null) {
+                pendingThemePhotoCallback.onPhotoSaved(out.getAbsolutePath());
+                pendingThemePhotoCallback = null;
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "تعذر حفظ صورة الخلفية", Toast.LENGTH_SHORT).show();
         }
     }
 }

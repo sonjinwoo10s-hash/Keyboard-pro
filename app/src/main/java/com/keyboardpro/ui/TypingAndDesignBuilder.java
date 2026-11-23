@@ -1,439 +1,393 @@
 package com.keyboardpro.ui;
 
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
-import android.graphics.Typeface;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.view.Gravity;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.core.content.ContextCompat;
-
-import com.example.R;
 import com.keyboardpro.data.KeyboardPrefs;
-import com.keyboardpro.ime.AiKeyboardHelper;
-import com.keyboardpro.ime.KeyboardLayoutData;
-import com.keyboardpro.ime.MiniKeyboardPreviewView;
+import com.keyboardpro.data.KeyboardSqliteHelper;
 import com.keyboardpro.ime.TextStyleEngine;
-import com.keyboardpro.ime.ThemeRegistry;
 
-import org.json.JSONArray;
-
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Builds Settings sub-screens for Languages, Smart Typing, Translation, Dictionary,
- * Text Shortcuts, Appearance/Blur/Glass/Dimensions, Fonts, Key Layout Editor, and Live Decoration.
+ * Modular sub-screen builders for Languages & Multi-Layouts, Smart Arabic Intelligence,
+ * Translation, Bulk Dictionary (.txt import), 37+ Searchable Shortcuts, Appearance/Dimensions,
+ * Fonts, Layout Maker, and 56-Style Live Decoration Manager.
  */
 public final class TypingAndDesignBuilder {
 
     public interface HostActions {
         void pickFontFile();
+        void pickDictionaryTxtFile();
         void refreshScreen();
     }
 
     private TypingAndDesignBuilder() {
     }
 
-    public static void buildLanguages(Context ctx, LinearLayout root, KeyboardPrefs prefs) {
-        LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "تخطيط اللغات والمفاتيح"));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "صف الأرقام الدائم",
-                "إظهار صف الأرقام (١-٠ / 1-0) أعلى الأحرف دائماً",
-                prefs.isNumbersRowEnabled(), prefs::setNumbersRowEnabled));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "تخطيط آيفون (iPhone Layout)",
-                "ترتيب أحرف عربية شبيه بلوحة مفاتيح iOS",
-                prefs.isIphoneLayoutEnabled(), prefs::setIphoneLayoutEnabled));
-        card.addView(DetailUiKit.createBodyText(ctx,
-                "ملاحظة: الوضع الأفقي (Landscape) يعمل دائماً بملء العرض الكامل (No-Split) بدون أي فراغ وسطي مع تعطيل وضع الشاشة الكاملة."));
-        root.addView(card);
+    public static void buildLanguages(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        root.addView(DetailUiKit.createSectionTitle(ctx, "تخطيط لوحة المفاتيح العربية (5 تخطيطات)"));
+        LinearLayout arCard = DetailUiKit.createCard(ctx);
+        String curAr = prefs.getArabicLayoutType();
+        String[][] arLayouts = {
+                {"default", "العربية الموحدة الافتراضية (ج ح خ... ض + ⌫ يمين)"},
+                {"iphone", "تخطيط آيفون العربي (iOS)"},
+                {"swiftkey", "تخطيط SwiftKey العربي"},
+                {"pc", "تخطيط الكمبيوتر العربي (PC 12 مفتاح)"},
+                {"arabic2", "عربية 2 (توزيع بديل)"}
+        };
+        for (String[] l : arLayouts) {
+            arCard.addView(DetailUiKit.createChipOption(ctx, l[1], l[0].equals(curAr), v -> {
+                prefs.setArabicLayoutType(l[0]);
+                host.refreshScreen();
+            }));
+        }
+        root.addView(arCard);
 
-        LinearLayout langCard = DetailUiKit.createCard(ctx);
-        langCard.addView(DetailUiKit.createSectionTitle(ctx, "اللغة الافتراضية عند فتح الكيبورد"));
-        String cur = prefs.getKeyboardLanguage();
-        langCard.addView(DetailUiKit.createChipOption(ctx, "العربية (Arabic)", "ar".equals(cur), v -> {
-            prefs.setKeyboardLanguage("ar");
-            Toast.makeText(ctx, "تم اختيار العربية كلغة افتراضية", Toast.LENGTH_SHORT).show();
-        }));
-        langCard.addView(DetailUiKit.createChipOption(ctx, "الإنجليزية (English QWERTY)", "en".equals(cur), v -> {
-            prefs.setKeyboardLanguage("en");
-            Toast.makeText(ctx, "English selected as default", Toast.LENGTH_SHORT).show();
-        }));
-        root.addView(langCard);
+        root.addView(DetailUiKit.createSectionTitle(ctx, "تخطيط اللغة الإنجليزية (4 تخطيطات)"));
+        LinearLayout enCard = DetailUiKit.createCard(ctx);
+        String curEn = prefs.getEnglishLayoutType();
+        String[][] enLayouts = {
+                {"qwerty", "QWERTY القياسي"},
+                {"azerty", "AZERTY الفرنسي"},
+                {"qwertz", "QWERTZ الأوروبي"},
+                {"colemak", "Colemak السريع"}
+        };
+        for (String[] l : enLayouts) {
+            enCard.addView(DetailUiKit.createChipOption(ctx, l[1], l[0].equals(curEn), v -> {
+                prefs.setEnglishLayoutType(l[0]);
+                host.refreshScreen();
+            }));
+        }
+        root.addView(enCard);
+
+        root.addView(DetailUiKit.createSectionTitle(ctx, "الصفوف الإضافية وأوضاع الشاشة"));
+        LinearLayout modesCard = DetailUiKit.createCard(ctx);
+        modesCard.addView(DetailUiKit.createBodyText(ctx,
+                "افتراضياً: لوحة المفاتيح موحّدة بعرض الشاشة الكامل بدون أي تقسيم في الوضع الأفقي والعمودي."));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "صف الأرقام الدائم (1-0)",
+                "إظهار صف أرقام مستقل أعلى الحروف", prefs.isNumbersRowEnabled(), prefs::setNumbersRowEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "صف الإيموجي السريع بدلاً من الأرقام",
+                "صف إيموجي فوري أعلى الحروف", prefs.isEmojiRowEnabled(), prefs::setEmojiRowEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "شريط الأدوات العلوي",
+                "الأدوات المثبتة وزر المزيد (⋯)", prefs.isShowToolbar(), prefs::setShowToolbar));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "صف الإجراءات السريعة",
+                "تحديد الكل، نسخ، قص، ولصق أعلى المفاتيح", prefs.isQuickActionsRowEnabled(), prefs::setQuickActionsRowEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "شريط آيفون السفلي",
+                "أيقونة الكرة الأرضية والإخفاء أسفل اللوحة", prefs.isIphoneBottomBar(), prefs::setIphoneBottomBar));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "وضع اليد الواحدة (اختياري)",
+                "تقليص عرض الكيبورد للكتابة بيد واحدة", prefs.isOneHandedModeEnabled(), prefs::setOneHandedModeEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "الوضع المنقسم للشاشات العريضة (اختياري)",
+                "معطّل افتراضياً — فعّله فقط إذا رغبت في تقسيم اللوحة", prefs.isSplitModeEnabled(), prefs::setSplitModeEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "الوضع العائم (اختياري)",
+                "لوحة مفاتيح عائمة بحواف مستديرة", prefs.isFloatingModeEnabled(), prefs::setFloatingModeEnabled));
+        modesCard.addView(DetailUiKit.createSwitchRow(ctx, "لوحة أرقام يمينية في الوضع الأفقي (اختياري)",
+                "إضافة Numpad على اليمين عند تدوير الشاشة", prefs.isLandscapeNumpadEnabled(), prefs::setLandscapeNumpadEnabled));
+        root.addView(modesCard);
     }
 
-    public static void buildSmartTyping(Context ctx, LinearLayout root, KeyboardPrefs prefs) {
-        LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "الذكاء اللغوي والاقتراحات"));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "شريط الاقتراحات",
-                "عرض الكلمات المقترحة والاختصارات أعلى لوحة المفاتيح",
-                prefs.isSuggestionsEnabled(), prefs::setSuggestionsEnabled));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "التصحيح التلقائي",
-                "تصحيح الأخطاء الإملائية الشائعة أثناء الكتابة السريعة",
-                prefs.isAutoCorrectEnabled(), prefs::setAutoCorrectEnabled));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "التنبؤ بالكلمة التالية",
-                "توقع الكلمة القادمة تلقائياً بناءً على السياق",
-                prefs.isNextWordPredictionEnabled(), prefs::setNextWordPredictionEnabled));
-        root.addView(card);
+    public static void buildSmartTyping(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        root.addView(DetailUiKit.createSectionTitle(ctx, "شريط الاقتراحات والتصحيح"));
+        LinearLayout barCard = DetailUiKit.createCard(ctx);
+        barCard.addView(DetailUiKit.createSwitchRow(ctx, "إظهار شريط الاقتراحات",
+                "اقتراحات فورية من قاعدة بيانات SQLite خفيفة", prefs.isSuggestionsEnabled(), prefs::setSuggestionsEnabled));
+        String curBar = prefs.getSuggestionBarMode();
+        barCard.addView(DetailUiKit.createChipOption(ctx, "شريط قابل للتمرير (حتى 8 اقتراحات)", "scroll".equals(curBar), v -> {
+            prefs.setSuggestionBarMode("scroll"); host.refreshScreen();
+        }));
+        barCard.addView(DetailUiKit.createChipOption(ctx, "3 اقتراحات ثابتة", "3".equals(curBar), v -> {
+            prefs.setSuggestionBarMode("3"); host.refreshScreen();
+        }));
+        barCard.addView(DetailUiKit.createChipOption(ctx, "5 اقتراحات ثابتة", "5".equals(curBar), v -> {
+            prefs.setSuggestionBarMode("5"); host.refreshScreen();
+        }));
+        root.addView(barCard);
+
+        root.addView(DetailUiKit.createSectionTitle(ctx, "محرك الذكاء العربي الفوري (بدون إنترنت)"));
+        LinearLayout smartCard = DetailUiKit.createCard(ctx);
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "التصحيح التلقائي عند المسافة",
+                "تصحيح الكلمات الشائعة وتطبيق الاختصارات تلقائياً", prefs.isAutoCorrectEnabled(), prefs::setAutoCorrectEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "توقع الكلمة التالية",
+                "مثال: السلام ← عليكم ← ورحمة", prefs.isNextWordPredictionEnabled(), prefs::setNextWordPredictionEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "مصحّح الهمزات والتاء المربوطة",
+                "تحويل (انا ← أنا، الى ← إلى، مدرسه ← مدرسة)", prefs.isHamzaTaFixerEnabled(), prefs::setHamzaTaFixerEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "محوّل الفرانكو إلى عربي (Arabizi)",
+                "تحويل (7abibi ← حبيبي، salam ← سلام، shokran ← شكراً)", prefs.isFrancoArabicEnabled(), prefs::setFrancoArabicEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "الحاسبة الفورية داخل الكتابة",
+                "اكتب (15*3+2=) ليظهر الناتج 47 فوراً", prefs.isInlineMathEnabled(), prefs::setInlineMathEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "اقتراحات الأذكار السريعة",
+                "إكمال تلقائي للأذكار عند كتابة سبحان / استغفر / اللهم", prefs.isAzkarSuggestionsEnabled(), prefs::setAzkarSuggestionsEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "تصحيح الاختصارات الإنجليزية",
+                "تحويل (dont ← don't، im ← I'm، cant ← can't)", prefs.isEnglishContractionsEnabled(), prefs::setEnglishContractionsEnabled));
+        smartCard.addView(DetailUiKit.createSwitchRow(ctx, "المسافة الذكية بعد علامات الترقيم",
+                "إضافة مسافة تلقائية بعد النقطة والفاصلة وعلامة الاستفهام", prefs.isSmartPunctuationEnabled(), prefs::setSmartPunctuationEnabled));
+        root.addView(smartCard);
+
+        root.addView(DetailUiKit.createSectionTitle(ctx, "قائمة استثناء تطبيقات البنوك (خصوصية قصوى)"));
+        LinearLayout bankCard = DetailUiKit.createCard(ctx);
+        bankCard.addView(DetailUiKit.createBodyText(ctx,
+                "في التطبيقات المدرجة أدناه يتم تعطيل الحافظة والزخرفة والتعلم تلقائياً (افصل بين أسماء الحزم بفاصلة):"));
+        EditText etBanks = DetailUiKit.createInput(ctx, "com.alrajhibank,com.snb.alahli", false);
+        etBanks.setText(prefs.getBankExclusionApps());
+        bankCard.addView(etBanks);
+        bankCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ قائمة استثناء البنوك", v -> {
+            prefs.setBankExclusionApps(etBanks.getText().toString().trim());
+            Toast.makeText(ctx, "تم تحديث قائمة الاستثناء بنجاح ✅", Toast.LENGTH_SHORT).show();
+        }));
+        root.addView(bankCard);
     }
 
     public static void buildTranslation(Context ctx, LinearLayout root, KeyboardPrefs prefs) {
         LinearLayout card = DetailUiKit.createCard(ctx);
         card.addView(DetailUiKit.createSectionTitle(ctx, "إعدادات الترجمة الفورية"));
-        card.addView(DetailUiKit.createSwitchRow(ctx, "الترجمة بدون إنترنت (Offline)",
-                "ترجمة العبارات العربية والإنجليزية الشائعة فورياً بدون اتصال",
+        card.addView(DetailUiKit.createSwitchRow(ctx, "تفعيل الترجمة السريعة في شريط الأدوات",
+                "استخدم أيقونة 🌐 داخل الكيبورد لترجمة نصك فوراً",
                 prefs.isOfflineTranslationEnabled(), prefs::setOfflineTranslationEnabled));
-
-        String[] langs = {"English", "Arabic", "French", "Spanish", "Turkish", "German"};
-        String current = prefs.getTranslationTargetLang();
-        card.addView(DetailUiKit.createBodyText(ctx, "لغة الترجمة المستهدفة: " + current));
-        for (String lang : langs) {
-            card.addView(DetailUiKit.createChipOption(ctx, lang, lang.equals(current), v -> {
-                prefs.setTranslationTargetLang(lang);
-                Toast.makeText(ctx, "لغة الترجمة: " + lang, Toast.LENGTH_SHORT).show();
-            }));
-        }
-        root.addView(card);
-
-        LinearLayout testCard = DetailUiKit.createCard(ctx);
-        testCard.addView(DetailUiKit.createSectionTitle(ctx, "مترجم فوري سريع"));
-        EditText etInput = DetailUiKit.createInput(ctx, "اكتب عبارة للترجمة (مثلاً: صباح الخير)...", false);
-        TextView tvResult = DetailUiKit.createBodyText(ctx, "النتيجة ستظهر هنا...");
-        testCard.addView(etInput);
-        testCard.addView(DetailUiKit.createPrimaryButton(ctx, "ترجمة الآن", v -> {
-            tvResult.setText("جاري الترجمة...");
-            new AiKeyboardHelper(ctx).processText(etInput.getText().toString(),
-                    AiKeyboardHelper.Action.TRANSLATE,
-                    (ok, out) -> tvResult.setText(out));
+        EditText etLang = DetailUiKit.createInput(ctx, "اللغة المستهدفة (مثال: English أو Arabic أو French)", false);
+        etLang.setText(prefs.getTranslationTargetLang());
+        card.addView(etLang);
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ اللغة المستهدفة", v -> {
+            prefs.setTranslationTargetLang(etLang.getText().toString().trim());
+            Toast.makeText(ctx, "تم حفظ لغة الترجمة ✅", Toast.LENGTH_SHORT).show();
         }));
-        testCard.addView(tvResult);
-        root.addView(testCard);
+        root.addView(card);
     }
 
-    public static void buildDictionary(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions actions) {
-        com.keyboardpro.data.KeyboardSqliteHelper db = com.keyboardpro.data.KeyboardSqliteHelper.getInstance(ctx);
+    public static void buildDictionary(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        KeyboardSqliteHelper db = KeyboardSqliteHelper.getInstance(ctx);
+
         LinearLayout addCard = DetailUiKit.createCard(ctx);
-        addCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة كلمة إلى القاموس الشخصي (SQLite مفهرس)"));
-        EditText etWord = DetailUiKit.createInput(ctx, "اكتب الكلمة الجديدة...", false);
+        addCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة كلمات أو استيراد جماعي (.txt)"));
+        EditText etWord = DetailUiKit.createInput(ctx, "أضف كلمة أو الصق عدة كلمات (سطر لكل كلمة)...", false);
+        etWord.setMinLines(2);
         addCard.addView(etWord);
-        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "إضافة للقاموس", v -> {
-            String w = etWord.getText().toString().trim();
-            if (w.isEmpty()) return;
-            db.addPersonalWord(w);
-            List<String> list = db.queryPersonalWords(200);
-            prefs.savePersonalDictionary(list);
-            actions.refreshScreen();
+
+        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "+ إضافة للقاموس الشخصي", v -> {
+            String raw = etWord.getText().toString().trim();
+            if (raw.isEmpty()) return;
+            List<String> lines = new ArrayList<>();
+            for (String s : raw.split("[\\r\\n,]+")) {
+                if (!s.trim().isEmpty()) lines.add(s.trim());
+            }
+            db.bulkAddPersonalWords(lines);
+            Toast.makeText(ctx, "تمت إضافة " + lines.size() + " كلمة إلى القاموس ✅", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
+        }));
+
+        addCard.addView(DetailUiKit.createChipOption(ctx, "📄 استيراد قاموس من ملف نصي (.txt)", true, v ->
+                host.pickDictionaryTxtFile()));
+
+        addCard.addView(DetailUiKit.createChipOption(ctx, "🗑 مسح جميع الكلمات المتعلّمة والشخصية", false, v -> {
+            db.clearPersonalWords();
+            Toast.makeText(ctx, "تم مسح الكلمات المتعلّمة", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
         }));
         root.addView(addCard);
 
         LinearLayout listCard = DetailUiKit.createCard(ctx);
-        listCard.addView(DetailUiKit.createSectionTitle(ctx, "الكلمات المحفوظة"));
-        List<String> words = db.queryPersonalWords(50);
-        for (String w : words) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, DetailUiKit.dp(ctx, 6), 0, DetailUiKit.dp(ctx, 6));
-
-            TextView tv = new TextView(ctx);
-            tv.setText(w);
-            tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
-            tv.setTextSize(14);
-            row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView del = new TextView(ctx);
-            del.setText("حذف");
-            del.setTextColor(ContextCompat.getColor(ctx, R.color.kp_danger));
-            del.setPadding(DetailUiKit.dp(ctx, 10), DetailUiKit.dp(ctx, 4), DetailUiKit.dp(ctx, 10), DetailUiKit.dp(ctx, 4));
-            del.setOnClickListener(v -> {
-                db.deletePersonalWord(w);
-                prefs.savePersonalDictionary(db.queryPersonalWords(200));
-                actions.refreshScreen();
-            });
-            row.addView(del);
-            listCard.addView(row);
+        listCard.addView(DetailUiKit.createSectionTitle(ctx, "كلماتك المحفوظة في SQLite"));
+        List<String> words = db.queryPersonalWords(60);
+        if (words.isEmpty()) {
+            listCard.addView(DetailUiKit.createBodyText(ctx, "لا توجد كلمات شخصية بعد — اكتب أو أضف كلماتك أعلاه."));
+        } else {
+            for (String w : words) {
+                listCard.addView(DetailUiKit.createChipOption(ctx, w + "   ✕", false, v -> {
+                    db.deletePersonalWord(w);
+                    host.refreshScreen();
+                }));
+            }
         }
         root.addView(listCard);
     }
 
-    public static void buildShortcuts(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions actions) {
+    public static void buildShortcuts(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
         LinearLayout addCard = DetailUiKit.createCard(ctx);
         addCard.addView(DetailUiKit.createSectionTitle(ctx, "إضافة اختصار نصي جديد"));
-        EditText etKey = DetailUiKit.createInput(ctx, "الاختصار (مثلاً: سع)", false);
-        EditText etVal = DetailUiKit.createInput(ctx, "النص الكامل (مثلاً: السلام عليكم ورحمة الله)", false);
+        EditText etKey = DetailUiKit.createInput(ctx, "الاختصار (مثال: سع أو brb)", false);
+        EditText etVal = DetailUiKit.createInput(ctx, "النص الكامل (مثال: السلام عليكم ورحمة الله وبركاته)", false);
         addCard.addView(etKey);
         addCard.addView(etVal);
-        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ الاختصار", v -> {
+        addCard.addView(DetailUiKit.createPrimaryButton(ctx, "+ حفظ الاختصار", v -> {
             String k = etKey.getText().toString().trim();
             String val = etVal.getText().toString().trim();
             if (k.isEmpty() || val.isEmpty()) return;
             Map<String, String> map = prefs.getTextShortcuts();
             map.put(k, val);
             prefs.saveTextShortcuts(map);
-            actions.refreshScreen();
+            Toast.makeText(ctx, "تم حفظ الاختصار ✅", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
         }));
         root.addView(addCard);
 
+        Map<String, String> shortcuts = prefs.getTextShortcuts();
         LinearLayout listCard = DetailUiKit.createCard(ctx);
-        listCard.addView(DetailUiKit.createSectionTitle(ctx, "اختصاراتي النشطة"));
-        for (Map.Entry<String, String> e : prefs.getTextShortcuts().entrySet()) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, DetailUiKit.dp(ctx, 6), 0, DetailUiKit.dp(ctx, 6));
+        listCard.addView(DetailUiKit.createSectionTitle(ctx, "الاختصارات الجاهزة (" + shortcuts.size() + " اختصار)"));
 
-            TextView tv = new TextView(ctx);
-            tv.setText(e.getKey() + "  ←  " + e.getValue());
-            tv.setTextColor(ContextCompat.getColor(ctx, R.color.kp_text_primary));
-            tv.setTextSize(13.5f);
-            row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        EditText etSearch = DetailUiKit.createInput(ctx, "ابحث داخل الاختصارات...", false);
+        listCard.addView(etSearch);
 
-            TextView del = new TextView(ctx);
-            del.setText("حذف");
-            del.setTextColor(ContextCompat.getColor(ctx, R.color.kp_danger));
-            del.setOnClickListener(v -> {
-                Map<String, String> map = prefs.getTextShortcuts();
-                map.remove(e.getKey());
-                prefs.saveTextShortcuts(map);
-                actions.refreshScreen();
-            });
-            row.addView(del);
-            listCard.addView(row);
-        }
+        LinearLayout itemsBox = new LinearLayout(ctx);
+        itemsBox.setOrientation(LinearLayout.VERTICAL);
+        listCard.addView(itemsBox);
+
+        Runnable render = () -> {
+            itemsBox.removeAllViews();
+            String q = etSearch.getText().toString().trim().toLowerCase();
+            for (Map.Entry<String, String> e : shortcuts.entrySet()) {
+                if (!q.isEmpty() && !e.getKey().toLowerCase().contains(q) && !e.getValue().toLowerCase().contains(q)) {
+                    continue;
+                }
+                itemsBox.addView(DetailUiKit.createChipOption(ctx,
+                        e.getKey() + "  ←  " + e.getValue() + "   ✕", false, v -> {
+                            Map<String, String> m = prefs.getTextShortcuts();
+                            m.remove(e.getKey());
+                            prefs.saveTextShortcuts(m);
+                            host.refreshScreen();
+                        }));
+            }
+        };
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { render.run(); }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        render.run();
         root.addView(listCard);
     }
 
     public static void buildAppearance(Context ctx, LinearLayout root, KeyboardPrefs prefs) {
-        LinearLayout previewCard = DetailUiKit.createCard(ctx);
-        previewCard.addView(DetailUiKit.createSectionTitle(ctx, "معاينة الثيم الحالي"));
-        MiniKeyboardPreviewView preview = new MiniKeyboardPreviewView(ctx);
-        preview.setTheme(ThemeRegistry.getThemeById(ctx, prefs.getActiveThemeId()));
-        previewCard.addView(preview, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, DetailUiKit.dp(ctx, 130)));
-        root.addView(previewCard);
-
-        LinearLayout dimCard = DetailUiKit.createCard(ctx);
-        dimCard.addView(DetailUiKit.createSectionTitle(ctx, "الأبعاد المستقلة (عمودي / أفقي)"));
-        dimCard.addView(DetailUiKit.createSliderRow(ctx, "ارتفاع الكيبورد (عمودي Portrait)", 200, 360,
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "أبعاد مستقلة للوضع الطولي والأفقي"));
+        card.addView(DetailUiKit.createSliderRow(ctx, "ارتفاع الكيبورد (طولي Portrait)", 190, 380,
                 prefs.getPortraitHeightDp(), "dp", prefs::setPortraitHeightDp));
-        dimCard.addView(DetailUiKit.createSliderRow(ctx, "ارتفاع الكيبورد (أفقي Landscape)", 140, 250,
+        card.addView(DetailUiKit.createSliderRow(ctx, "ارتفاع الكيبورد (أفقي Landscape)", 130, 260,
                 prefs.getLandscapeHeightDp(), "dp", prefs::setLandscapeHeightDp));
-        dimCard.addView(DetailUiKit.createSliderRow(ctx, "حجم أحرف المفاتيح (عمودي)", 14, 25,
+        card.addView(DetailUiKit.createSliderRow(ctx, "حجم خط المفاتيح (طولي)", 13, 26,
                 prefs.getPortraitKeyTextSp(), "sp", prefs::setPortraitKeyTextSp));
-        dimCard.addView(DetailUiKit.createSliderRow(ctx, "حجم أحرف المفاتيح (أفقي)", 12, 21,
+        card.addView(DetailUiKit.createSliderRow(ctx, "حجم خط المفاتيح (أفقي)", 12, 22,
                 prefs.getLandscapeKeyTextSp(), "sp", prefs::setLandscapeKeyTextSp));
-        dimCard.addView(DetailUiKit.createSliderRow(ctx, "استدارة زوايا المفاتيح", 0, 20,
-                prefs.getKeyCornerRadiusDp(), "dp", prefs::setKeyCornerRadiusDp));
-        root.addView(dimCard);
+        card.addView(DetailUiKit.createSliderRow(ctx, "الهامش السفلي للوحة", 0, 48,
+                prefs.getBottomMarginDp(), "dp", prefs::setBottomMarginDp));
+        root.addView(card);
 
-        LinearLayout fxCard = DetailUiKit.createCard(ctx);
-        fxCard.addView(DetailUiKit.createSectionTitle(ctx, "الزجاج الكريستالي والتمويه الشفاف (Pro)"));
-        fxCard.addView(DetailUiKit.createSwitchRow(ctx, "خلفية شفافة مموهة (Blur)",
-                "إظهار التطبيق خلف الكيبورد مع تأثير ضبابي زجاجي فوري",
+        LinearLayout blurCard = DetailUiKit.createCard(ctx);
+        blurCard.addView(DetailUiKit.createSectionTitle(ctx, "تأثيرات الزجاج الكريستالي والتمويه"));
+        blurCard.addView(DetailUiKit.createSwitchRow(ctx, "خلفية شفافة مموهة (Hardware Blur)",
+                "تمويه حقيقي على Android 12+ وشفافية خفيفة على أندرويد 8-11",
                 prefs.isTransparentBlurEnabled(), prefs::setTransparentBlurEnabled));
-        fxCard.addView(DetailUiKit.createSliderRow(ctx, "قوة التمويه والشفافية", 10, 95,
-                prefs.getBlurStrength(), "%", prefs::setBlurStrength));
-        fxCard.addView(DetailUiKit.createSwitchRow(ctx, "مفاتيح كريستال وزجاج مضيء",
-                "تفعيل الحدود المتوهجة واللمعان الزجاجي على جميع الثيمات",
+        blurCard.addView(DetailUiKit.createSwitchRow(ctx, "فرض أزرار زجاج كريستال على كل الثيمات",
+                "تطبيق تأثير الزجاج اللامع فوق الثيم الحالي",
                 prefs.isGlassKeysForced(), prefs::setGlassKeysForced));
-        fxCard.addView(DetailUiKit.createSwitchRow(ctx, "إظهار شريط الأدوات العلوي",
-                "شريط الزخرفة السريعة، الذكاء الاصطناعي، الحافظة، والخزنة",
-                prefs.isShowToolbar(), prefs::setShowToolbar));
-        root.addView(fxCard);
+        blurCard.addView(DetailUiKit.createSliderRow(ctx, "شدة التمويه / الشفافية", 0, 100,
+                prefs.getBlurStrength(), "%", prefs::setBlurStrength));
+        root.addView(blurCard);
     }
 
-    public static void buildFonts(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions actions) {
-        LinearLayout uiFontCard = DetailUiKit.createCard(ctx);
-        uiFontCard.addView(DetailUiKit.createSectionTitle(ctx, "خط واجهة الكيبورد (استيراد من ملف)"));
-        String currentPath = prefs.getCustomUiFontPath();
-        uiFontCard.addView(DetailUiKit.createBodyText(ctx,
-                currentPath.isEmpty() ? "الخط الحالي: خط النظام الافتراضي العريض"
-                        : "ملف الخط المخصص: " + currentPath));
-        uiFontCard.addView(DetailUiKit.createPrimaryButton(ctx, "استيراد ملف خط (.ttf / .otf)", v -> actions.pickFontFile()));
-        if (!currentPath.isEmpty()) {
-            uiFontCard.addView(DetailUiKit.createChipOption(ctx, "إعادة الخط الافتراضي", false, v -> {
+    public static void buildFonts(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "خط واجهة الكيبورد (TTF / OTF)"));
+        String cur = prefs.getCustomUiFontPath();
+        card.addView(DetailUiKit.createBodyText(ctx,
+                cur.isEmpty() ? "الخط الحالي: خط النظام الافتراضي العريض" : "خط مخصص: " + cur));
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "📂 استيراد ملف خط (.ttf / .otf)", v -> host.pickFontFile()));
+        if (!cur.isEmpty()) {
+            card.addView(DetailUiKit.createChipOption(ctx, "استعادة خط النظام الافتراضي", false, v -> {
                 prefs.setCustomUiFontPath("");
-                actions.refreshScreen();
+                host.refreshScreen();
             }));
         }
-        root.addView(uiFontCard);
-
-        LinearLayout unicodeCard = DetailUiKit.createCard(ctx);
-        unicodeCard.addView(DetailUiKit.createSectionTitle(ctx, "خطوط الكتابة الإنجليزية الفورية (12 خط يونيكود)"));
-        String activeId = prefs.getActiveStyleId();
-        for (TextStyleEngine.StyleOption opt : TextStyleEngine.getAllStyles()) {
-            if (opt.isArabic && !TextStyleEngine.STYLE_NORMAL.equals(opt.id)) continue;
-            boolean sel = opt.id.equals(activeId) && prefs.isDecorationEnabled();
-            unicodeCard.addView(DetailUiKit.createChipOption(ctx,
-                    opt.displayName + "  —  " + opt.samplePreview, sel, v -> {
-                        if (TextStyleEngine.STYLE_NORMAL.equals(opt.id)) {
-                            prefs.setDecorationEnabled(false);
-                            prefs.setActiveStyleId(TextStyleEngine.STYLE_NORMAL);
-                        } else {
-                            prefs.setDecorationEnabled(true);
-                            prefs.setActiveStyleId(opt.id);
-                        }
-                        Toast.makeText(ctx, "تم تفعيل الخط: " + opt.shortLabel, Toast.LENGTH_SHORT).show();
-                        actions.refreshScreen();
-                    }));
-        }
-        root.addView(unicodeCard);
+        root.addView(card);
     }
 
-    public static void buildDecorationManager(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions actions) {
-        TextStyleEngine engine = new TextStyleEngine();
-
-        LinearLayout toggleCard = DetailUiKit.createCard(ctx);
-        toggleCard.addView(DetailUiKit.createSectionTitle(ctx, "محرك الزخرفة والخطوط الفوري"));
-        toggleCard.addView(DetailUiKit.createSwitchRow(ctx, "تفعيل الزخرفة التلقائية أثناء الكتابة",
-                "تحويل الأحرف العربية والإنجليزية مباشرة قبل الإدخال في أي تطبيق",
-                prefs.isDecorationEnabled(), prefs::setDecorationEnabled));
-
-        EditText etPreview = DetailUiKit.createInput(ctx, "اكتب نصاً عربياً أو إنجليزياً للمعاينة الفورية...", false);
-        etPreview.setText("كيبورد برو Keyboard Pro");
-        toggleCard.addView(etPreview);
-        root.addView(toggleCard);
-
-        LinearLayout stylesList = DetailUiKit.createCard(ctx);
-        stylesList.addView(DetailUiKit.createSectionTitle(ctx, "معاينة وتفعيل أنماط الزخرفة (اضغط للتفعيل / مطوّل للنسخ)"));
-        LinearLayout dynamicRows = new LinearLayout(ctx);
-        dynamicRows.setOrientation(LinearLayout.VERTICAL);
-        stylesList.addView(dynamicRows);
-
-        Runnable renderSamples = () -> {
-            dynamicRows.removeAllViews();
-            String input = etPreview.getText().toString();
-            if (input.isEmpty()) input = "كيبورد برو Keyboard Pro";
-            String active = prefs.getActiveStyleId();
-
-            for (TextStyleEngine.StyleOption opt : TextStyleEngine.getAllStyles()) {
-                String rendered = engine.transformText(input, opt.id);
-                boolean selected = opt.id.equals(active) && prefs.isDecorationEnabled();
-                TextView row = DetailUiKit.createChipOption(ctx,
-                        opt.displayName + "\n" + rendered, selected, v -> {
-                            boolean enable = !TextStyleEngine.STYLE_NORMAL.equals(opt.id);
-                            prefs.setDecorationEnabled(enable);
-                            prefs.setActiveStyleId(opt.id);
-                            Toast.makeText(ctx, "تم تفعيل: " + opt.displayName, Toast.LENGTH_SHORT).show();
-                            actions.refreshScreen();
-                        });
-                row.setOnLongClickListener(v -> {
-                    ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (cm != null) {
-                        cm.setPrimaryClip(ClipData.newPlainText("decorated", rendered));
-                        Toast.makeText(ctx, "تم نسخ النص المزخرف!", Toast.LENGTH_SHORT).show();
-                    }
-                    return true;
-                });
-                dynamicRows.addView(row);
+    public static void buildLayoutEditor(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        LinearLayout card = DetailUiKit.createCard(ctx);
+        card.addView(DetailUiKit.createSectionTitle(ctx, "صانع وتعديل تخطيط الحروف العربية"));
+        card.addView(DetailUiKit.createBodyText(ctx,
+                "اكتب 3 أسطر مفصولة بمسافات بين كل مفتاح. اترك الحقل فارغاً لاستخدام التخطيط الموحد الافتراضي:"));
+        EditText etRows = DetailUiKit.createInput(ctx,
+                "ض ص ث ق ف غ ع ه خ ح ج\nش س ي ب ل ا ت ن م ك ط\nذ ء ؤ ر ى ة و ز ظ د", false);
+        etRows.setMinLines(4);
+        String saved = prefs.getCustomArabicLayoutJson();
+        if (!saved.isEmpty()) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(saved);
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < arr.length(); i++) {
+                    if (i > 0) sb.append('\n');
+                    sb.append(arr.getString(i));
+                }
+                etRows.setText(sb.toString());
+            } catch (Exception ignored) {
             }
-        };
-        renderSamples.run();
+        }
+        card.addView(etRows);
+        card.addView(DetailUiKit.createPrimaryButton(ctx, "✅ حفظ التخطيط المخصص", v -> {
+            String raw = etRows.getText().toString().trim();
+            if (raw.isEmpty()) {
+                prefs.setCustomArabicLayoutJson("");
+            } else {
+                org.json.JSONArray arr = new org.json.JSONArray();
+                for (String line : raw.split("\\r?\\n")) {
+                    if (!line.trim().isEmpty()) arr.put(line.trim());
+                }
+                prefs.setCustomArabicLayoutJson(arr.toString());
+            }
+            Toast.makeText(ctx, "تم حفظ التخطيط بنجاح ✅", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
+        }));
+        card.addView(DetailUiKit.createChipOption(ctx, "↺ استعادة التخطيط العربي الموحد الافتراضي", false, v -> {
+            prefs.setCustomArabicLayoutJson("");
+            Toast.makeText(ctx, "تمت استعادة التخطيط الافتراضي", Toast.LENGTH_SHORT).show();
+            host.refreshScreen();
+        }));
+        root.addView(card);
+    }
 
-        etPreview.addTextChangedListener(new TextWatcher() {
+    public static void buildDecorationManager(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions host) {
+        LinearLayout topCard = DetailUiKit.createCard(ctx);
+        topCard.addView(DetailUiKit.createSectionTitle(ctx, "الزخرفة الفورية (26 عربي + 30 إنجليزي)"));
+        topCard.addView(DetailUiKit.createBodyText(ctx,
+                "تتوقف الزخرفة تلقائياً في حقول كلمات المرور والبريد الإلكتروني والروابط وتطبيقات البنوك لحمايتك."));
+        topCard.addView(DetailUiKit.createSwitchRow(ctx, "تفعيل الزخرفة أثناء الكتابة",
+                "تطبيق النمط المختار مباشرة في أي تطبيق", prefs.isDecorationEnabled(), prefs::setDecorationEnabled));
+
+        EditText etTest = DetailUiKit.createInput(ctx, "اكتب نصاً للمعاينة الحية لكل الأنماط...", false);
+        etTest.setText("كيبورد برو Keyboard Pro");
+        topCard.addView(etTest);
+
+        TextStyleEngine engine = new TextStyleEngine();
+        TextView tvLiveOut = DetailUiKit.createBodyText(ctx, engine.transformText(etTest.getText().toString(), prefs.getActiveStyleId()));
+        tvLiveOut.setTextSize(16);
+        topCard.addView(tvLiveOut);
+
+        etTest.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                renderSamples.run();
+                tvLiveOut.setText(engine.transformText(s == null ? "" : s.toString(), prefs.getActiveStyleId()));
             }
             @Override public void afterTextChanged(Editable s) {}
         });
-        root.addView(stylesList);
+        root.addView(topCard);
 
-        LinearLayout symCard = DetailUiKit.createCard(ctx);
-        symCard.addView(DetailUiKit.createSectionTitle(ctx, "الرموز الزخرفية المخصصة"));
-        EditText etSyms = DetailUiKit.createInput(ctx, "أضف رموزك الزخرفية المفضلة...", false);
-        etSyms.setText(prefs.getCustomSymbols());
-        symCard.addView(etSyms);
-        symCard.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ الرموز المخصصة", v -> {
-            prefs.setCustomSymbols(etSyms.getText().toString());
-            Toast.makeText(ctx, "تم حفظ الرموز المخصصة", Toast.LENGTH_SHORT).show();
-        }));
-        root.addView(symCard);
-    }
-
-    public static void buildLayoutEditor(Context ctx, LinearLayout root, KeyboardPrefs prefs, HostActions actions) {
-        LinearLayout card = DetailUiKit.createCard(ctx);
-        card.addView(DetailUiKit.createSectionTitle(ctx, "محرر تخطيط المفاتيح التفاعلي"));
-        card.addView(DetailUiKit.createBodyText(ctx,
-                "اضغط على أي مفتاحين لتبديل موقعيهما فوراً، ثم اضغط «حفظ التخطيط» لتطبيقه على لوحة المفاتيح."));
-
-        String[][] grid = KeyboardLayoutData.parseCustomArabicOrDefault(
-                prefs.getCustomArabicLayoutJson(), prefs.isIphoneLayoutEnabled());
-        final int[] firstRow = {-1};
-        final int[] firstCol = {-1};
-
-        LinearLayout board = new LinearLayout(ctx);
-        board.setOrientation(LinearLayout.VERTICAL);
-
-        Runnable[] rebuild = new Runnable[1];
-        rebuild[0] = () -> {
-            board.removeAllViews();
-            for (int r = 0; r < grid.length; r++) {
-                LinearLayout rowView = new LinearLayout(ctx);
-                rowView.setOrientation(LinearLayout.HORIZONTAL);
-                LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT, DetailUiKit.dp(ctx, 44));
-                rlp.bottomMargin = DetailUiKit.dp(ctx, 6);
-                rowView.setLayoutParams(rlp);
-
-                for (int c = 0; c < grid[r].length; c++) {
-                    final int fr = r;
-                    final int fc = c;
-                    TextView key = new TextView(ctx);
-                    key.setText(grid[r][c]);
-                    key.setGravity(Gravity.CENTER);
-                    key.setTypeface(Typeface.DEFAULT_BOLD);
-                    key.setTextSize(15);
-                    boolean isSel = (r == firstRow[0] && c == firstCol[0]);
-                    key.setBackgroundResource(isSel ? R.drawable.bg_chip_selected : R.drawable.bg_search_bar);
-                    key.setTextColor(ContextCompat.getColor(ctx,
-                            isSel ? R.color.kp_primary : R.color.kp_text_primary));
-                    LinearLayout.LayoutParams klp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
-                    klp.setMargins(DetailUiKit.dp(ctx, 2), 0, DetailUiKit.dp(ctx, 2), 0);
-                    key.setOnClickListener(v -> {
-                        if (firstRow[0] == -1) {
-                            firstRow[0] = fr;
-                            firstCol[0] = fc;
-                        } else {
-                            String tmp = grid[firstRow[0]][firstCol[0]];
-                            grid[firstRow[0]][firstCol[0]] = grid[fr][fc];
-                            grid[fr][fc] = tmp;
-                            firstRow[0] = -1;
-                            firstCol[0] = -1;
-                        }
-                        rebuild[0].run();
-                    });
-                    rowView.addView(key, klp);
-                }
-                board.addView(rowView);
-            }
-        };
-        rebuild[0].run();
-        card.addView(board);
-
-        card.addView(DetailUiKit.createPrimaryButton(ctx, "حفظ التخطيط المخصص", v -> {
-            JSONArray outer = new JSONArray();
-            for (String[] row : grid) {
-                JSONArray inner = new JSONArray();
-                for (String k : row) inner.put(k);
-                outer.put(inner);
-            }
-            prefs.setCustomArabicLayoutJson(outer.toString());
-            Toast.makeText(ctx, "تم حفظ تخطيط المفاتيح المخصص ✅", Toast.LENGTH_SHORT).show();
-        }));
-
-        card.addView(DetailUiKit.createChipOption(ctx, "استعادة التخطيط الافتراضي", false, v -> {
-            prefs.setCustomArabicLayoutJson("");
-            Toast.makeText(ctx, "تمت استعادة التخطيط الافتراضي", Toast.LENGTH_SHORT).show();
-            actions.refreshScreen();
-        }));
-
-        root.addView(card);
+        LinearLayout listCard = DetailUiKit.createCard(ctx);
+        listCard.addView(DetailUiKit.createSectionTitle(ctx, "اختر نمط الزخرفة (56 نمطاً جاهزاً)"));
+        String curId = prefs.getActiveStyleId();
+        for (TextStyleEngine.StyleOption opt : TextStyleEngine.getAllStyles()) {
+            boolean sel = opt.id.equals(curId);
+            listCard.addView(DetailUiKit.createChipOption(ctx,
+                    opt.displayName + "  —  " + opt.samplePreview, sel, v -> {
+                        prefs.setActiveStyleId(opt.id);
+                        prefs.setDecorationEnabled(!TextStyleEngine.STYLE_NORMAL.equals(opt.id));
+                        host.refreshScreen();
+                    }));
+        }
+        root.addView(listCard);
     }
 }

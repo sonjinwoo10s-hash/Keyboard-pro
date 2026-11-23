@@ -11,7 +11,7 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Unified Top Bar: App Icon & Name on Right (Start in RTL), Gold Crown Button on Left (End in RTL) -->
+        <!-- Unified AMOLED Top Bar -->
         <LinearLayout
             android:id="@+id/top_bar"
             android:layout_width="match_parent"
@@ -53,7 +53,7 @@
                     android:textSize="11sp" />
             </LinearLayout>
 
-            <!-- Gold Crown Pro Button on Left -->
+            <!-- Unlocked Badge Button -->
             <LinearLayout
                 android:id="@+id/btn_pro_crown"
                 android:layout_width="wrap_content"
@@ -69,8 +69,8 @@
                 android:paddingHorizontal="14dp">
 
                 <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
                     android:contentDescription="@string/pro_crown_desc"
                     android:src="@drawable/ic_crown" />
 
@@ -80,7 +80,7 @@
                     android:layout_marginStart="6dp"
                     android:text="@string/pro_badge"
                     android:textColor="@color/kp_gold"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
@@ -93,14 +93,29 @@
             android:layout_weight="1" />
     </LinearLayout>
 
-    <!-- Floating Translucent Bottom Navigation Bar (3 Tabs ONLY) -->
+    <!-- Persistent Floating Circular Blue Keyboard Test FAB (bottom-left in RTL = bottom|end) -->
+    <ImageButton
+        android:id="@+id/fab_test_keyboard"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="92dp"
+        android:background="@drawable/bg_fab_blue"
+        android:contentDescription="@string/test_kb_fab_desc"
+        android:elevation="14dp"
+        android:padding="15dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_keyboard" />
+
+    <!-- Floating Translucent Bottom Navigation Bar (3 Tabs: Home, Customize, Settings) -->
     <LinearLayout
         android:id="@+id/floating_bottom_nav_wrapper"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:gravity="center"
-        android:paddingHorizontal="20dp"
+        android:paddingHorizontal="18dp"
         android:paddingBottom="14dp">
 
         <LinearLayout
@@ -113,7 +128,7 @@
             android:orientation="horizontal"
             android:paddingHorizontal="8dp">
 
-            <!-- Tab 1: Home -->
+            <!-- Tab 1: Home (Themes) -->
             <LinearLayout
                 android:id="@+id/nav_tab_home"
                 android:layout_width="0dp"
@@ -143,7 +158,36 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Tab 2: Settings -->
+            <!-- Tab 2: Customize -->
+            <LinearLayout
+                android:id="@+id/nav_tab_customize"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/nav_icon_customize"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@string/nav_customize"
+                    android:src="@drawable/ic_customize" />
+
+                <TextView
+                    android:id="@+id/nav_label_customize"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="@string/nav_customize"
+                    android:textColor="@color/kp_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Tab 3: Settings -->
             <LinearLayout
                 android:id="@+id/nav_tab_settings"
                 android:layout_width="0dp"
@@ -167,35 +211,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:text="@string/nav_settings"
-                    android:textColor="@color/kp_text_secondary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <!-- Tab 3: Requests -->
-            <LinearLayout
-                android:id="@+id/nav_tab_requests"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center"
-                android:orientation="horizontal">
-
-                <ImageView
-                    android:id="@+id/nav_icon_requests"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:contentDescription="@string/nav_requests"
-                    android:src="@drawable/ic_requests" />
-
-                <TextView
-                    android:id="@+id/nav_label_requests"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:text="@string/nav_requests"
                     android:textColor="@color/kp_text_secondary"
                     android:textSize="13sp"
                     android:textStyle="bold" />

@@ -3,6 +3,7 @@
     android:id="@+id/theme_card_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_margin="5dp"
     android:background="@drawable/bg_card"
     android:clickable="true"
     android:focusable="true"

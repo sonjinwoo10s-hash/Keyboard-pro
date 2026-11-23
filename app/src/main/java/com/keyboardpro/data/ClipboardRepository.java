@@ -6,10 +6,12 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * On-demand SQLite-backed clipboard history repository using indexed LIMIT queries
- * to keep memory footprint minimal inside the InputMethodService process.
+ * On-demand SQLite-backed clipboard history repository using indexed LIMIT queries,
+ * optional 3-day auto-expiry for unpinned items, and configurable newest/oldest sort.
  */
 public class ClipboardRepository {
+
+    private static final long THREE_DAYS_MS = 3L * 24L * 60L * 60L * 1000L;
 
     public static class ClipItem {
         public final String id;
@@ -32,11 +34,18 @@ public class ClipboardRepository {
     }
 
     public List<ClipItem> getClips() {
-        return getClips(20);
+        return getClips(24, true, false);
     }
 
     public List<ClipItem> getClips(int limit) {
-        return dbHelper.queryClipboard(limit);
+        return getClips(limit, true, false);
+    }
+
+    public List<ClipItem> getClips(int limit, boolean newestFirst, boolean autoDelete3Days) {
+        if (autoDelete3Days) {
+            dbHelper.deleteOldUnpinnedClips(System.currentTimeMillis() - THREE_DAYS_MS);
+        }
+        return dbHelper.queryClipboard(limit, newestFirst);
     }
 
     public void addClip(String text) {
